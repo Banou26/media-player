@@ -16,6 +16,7 @@
   },
   "author": "Banou26",
   "devDependencies": {
+    "@types/node": "^17.0.23",
     "concurrently": "^7.0.0",
     "copyfiles": "^2.4.1",
     "esbuild": "^0.14.29",

@@ -42,6 +42,7 @@ const config = {
   },
   plugins: [polyfills],
   define: {
+    'global': 'globalThis',
     'process.platform': '"web"',
     'process.env.WEB_ORIGIN': '"http://localhost:1234"',
     'process.env.WEB_SANDBOX_ORIGIN': '"http://localhost:2345"',
