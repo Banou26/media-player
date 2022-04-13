@@ -1,83 +1,232 @@
-import { EbmlStreamDecoder, EbmlStreamEncoder, EbmlTagId } from 'ebml-stream'
-import { Readable, Transform } from 'stream'
+/// <reference types="@emotion/react/types/css-prop" />
+import { forwardRef, useCallback, useEffect, useRef, useState, VideoHTMLAttributes } from 'react'
+import { createRoot } from 'react-dom/client'
+import { call } from 'osra'
+import { css, Global } from '@emotion/react'
 
-const downloadArrayBuffer = buffer => {
-  const videoBlob = new Blob([new Uint8Array(buffer, 0, buffer.length)], { type: 'video/mp4' })
+import { Resolvers as WorkerResolvers } from './worker'
 
-  var xhr = new XMLHttpRequest()
-  xhr.open("GET", URL.createObjectURL(videoBlob))
-  xhr.responseType = "arraybuffer"
-
-  xhr.onload = function () {
-      if (this.status === 200) {
-          var blob = new Blob([xhr.response], {type: "application/octet-stream"})
-          var objectUrl = URL.createObjectURL(blob)
-          window.open(objectUrl)
+const useThrottle = () =>
+  useCallback((func, limit) => {
+    let inThrottle
+    return (...args: any[]) => {
+      if (!inThrottle) {
+        func(...args)
+        inThrottle = true
+        setTimeout(() => {
+          inThrottle = false
+        }, limit)
       }
+    }
+  }, [])
+
+const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
+  const worker = new Worker('/worker.js')
+  const { stream: streamOut, info } = await call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream })
+  console.log('info', info)
+  return {
+    info,
+
   }
-  xhr.send()
 }
 
-fetch('/video.mkv').then(async (res) => {
-  const originalBuffer = await fetch('/video.mkv').then(res => res.arrayBuffer())
-  // const audioElement = document.createElement('video')
-  // audioElement.controls = true
-  // document.body.appendChild(audioElement)
-  // const blob = new Blob([await res.arrayBuffer()], { type: "video/matroska" })
-  // const url = window.URL.createObjectURL(blob)
-  // audioElement.src = url
-  // audioElement.play()
-  // return
-  const { body: stream } = res
-  if (!stream) throw new Error('stream was null')
-  const decoder = new EbmlStreamDecoder()
-  
-  const ebmlEncoder = new EbmlStreamEncoder()
- 
-  let strippedTracks = {}
+const chromeStyle = css`
+  --background-padding: 2rem;
+  display: grid;
+  .bottom {
+    align-self: end;
+    height: calc(4.8rem + var(--background-padding));
 
-  const buffers: Uint8Array[] = []
 
-  // decoder.on('data', chunk => console.log(chunk))
-  decoder.pipe(ebmlEncoder).on('data', chunk => buffers.push(chunk))
+    /* subtle background black gradient for scenes with high brightness to properly display white progress bar */
+    font-size: 1.9rem;
+    font-weight: 700;
+    text-align: center;
+    text-shadow: rgb(0 0 0 / 80%) 1px 1px 0;
+    padding-top: var(--background-padding);
+    background: linear-gradient(0deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.1) calc(100% - 1rem), rgba(0,0,0,0) 100%);
 
-  const streamReader = stream.getReader()
-  const readStream = async () => {
-    const { value, done } = await streamReader.read()
-    if (done) {
-      decoder.end()
-      const resultBuffer = buffers.reduce((accBuffer, buffer) => {
-        const mergedArray = new Uint8Array(accBuffer.length + buffer.length)
-        mergedArray.set(accBuffer)
-        mergedArray.set(buffer, accBuffer.length)
-        return mergedArray
-      }, new Uint8Array())
-      console.log('buffers', buffers)
-      console.log('originalBuffer', new Uint8Array(originalBuffer))
-      console.log('resultBuffer', resultBuffer)
-      console.log('byteLength diff', resultBuffer.byteLength - originalBuffer.byteLength)
-      console.log('originalBuffer view', new Uint8Array(originalBuffer, 5_000, 500))
-      console.log('resultBuffer view', new Uint8Array(resultBuffer.buffer, 5_000, 500))
-      const audioElement = document.createElement('video')
-      audioElement.controls = true
-      document.body.appendChild(audioElement)
-      const blob = new Blob([resultBuffer], { type: "video/matroska" })
-      const url = window.URL.createObjectURL(blob)
-      audioElement.src = url
-      audioElement.play()
-      return
+    .progress {
+      height: .4rem;
+      background-color: hsla(0, 100%, 100%, .2);
     }
-    decoder.write(value)
-    readStream()
   }
-  readStream()
-  
+`
 
-
-  // fs.readFile('media/test.webm', (err, data) => {
-  //     if (err) {
-  //         throw err
-  //     }
-  //     decoder.write(data)
-  // })
+const Chrome = (({ ...rest }) => {
+  return (
+    <div css={chromeStyle} {...rest}>
+      <div className="bottom">
+        <div className="preview"></div>
+        <div className="progress">
+          {/* bar displaying the current playback progress */}
+          <div className="play"></div>
+          {/* bar showing the currently loaded progress */}
+          <div className="load"></div>
+          {/* bar to show when hovering to potentially seek */}
+          <div className="hover"></div>
+          <div className="chapters"></div>
+          <div className="scrubber"></div>
+        </div>
+      </div>
+    </div>
+  )
 })
+
+const style = css`
+  display: grid;
+  justify-content: center;
+  background-color: #111;
+
+  video {
+    /* pointer-events: none; */
+    grid-column: 1;
+    grid-row: 1;
+
+    height: 100%;
+    max-width: 100vw;
+    background-color: black;
+  }
+
+  .chrome {
+    grid-column: 1;
+    grid-row: 1;
+  }
+`
+
+const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { mediaSource?: MediaSource }>(({ mediaSource }, ref) => {
+  const [sourceUrl, setSourceUrl] = useState<string>()
+
+  useEffect(() => {
+    if (!mediaSource) return
+    setSourceUrl(URL.createObjectURL(mediaSource))
+  }, [mediaSource])
+
+  const waiting: React.DOMAttributes<HTMLVideoElement>['onWaiting'] = (ev) => {
+
+  }
+
+  const seeking: React.DOMAttributes<HTMLVideoElement>['onSeeking'] = (ev) => {
+
+  }
+
+  const timeUpdate: React.DOMAttributes<HTMLVideoElement>['onTimeUpdate'] = (ev) => {
+
+  }
+  
+  return (
+    <div css={style}>
+      <video ref={ref} src={sourceUrl} onWaiting={waiting} onSeeking={seeking} onTimeUpdate={timeUpdate}/>
+      <Chrome className="chrome"/>
+    </div>
+  )
+})
+
+const FKNMediaPlayer = ({ id, size, stream: inStream }: { id?: string, size?: number, stream?: ReadableStream<Uint8Array> }) => {
+  const [transmuxer, setTransmuxer] = useState<Awaited<ReturnType<typeof makeTransmuxer>>>()
+  const [mediaSource] = useState(new MediaSource())
+
+  // useEffect(() => {
+  //   if (!duration) return
+  //   mediaSource.duration = duration
+  // }, [duration])
+
+  // sourceBuffer.mode = 'segments'
+
+  // useEffect(() => {
+  //   mediaSource.addEventListener(
+  //     'sourceopen',
+  //     () => resolve(mediaSource.addSourceBuffer(mime)),
+  //     { once: true }
+  //   )
+  // }, [transmuxer])
+
+  useEffect(() => {
+    if (!size || !inStream) return
+    makeTransmuxer({ size, stream: inStream }).then(setTransmuxer)
+  }, [size, inStream])
+
+  return <FKNVideo mediaSource={mediaSource}/>
+}
+
+export default FKNMediaPlayer
+
+
+const mountStyle = css`
+  display: grid;
+  height: 100%;
+  width: 100%;
+`
+
+const Mount = () => {
+  const [stream, setStream] = useState<ReadableStream<Uint8Array> | null>()
+
+  useEffect(() => {
+    fetch('./video.mkv')
+      .then(res => res.body)
+      .then(setStream)
+  }, [])
+
+  return (
+    <div css={mountStyle}>
+      <FKNMediaPlayer />
+    </div>
+  )
+}
+
+const globalStyle = css`
+  @import '/index.css';
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Fira+Sans:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,500;1,600;1,700;1,800;1,900&family=Montserrat:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&family=Roboto:ital,wght@0,100;0,300;0,400;0,500;0,700;0,900;1,100;1,300;1,400;1,500;1,700;1,900&display=swap');
+
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    font-size: 62.5%;
+    height: 100%;
+    width: 100%;
+  }
+
+  body {
+    margin: 0;
+    height: 100%;
+    width: 100%;
+    font-size: 1.6rem;
+    font-family: Fira Sans;
+    color: #fff;
+    
+    font-family: Montserrat;
+    // font-family: "Segoe UI", Roboto, "Fira Sans",  "Helvetica Neue", Arial, sans-serif;
+  }
+
+  body > div {
+    height: 100%;
+    width: 100%;
+  }
+
+  a {
+    color: #777777;
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: #fff;
+    text-decoration: underline;
+  }
+
+  ul {
+    list-style: none;
+  }
+`
+
+createRoot(
+  document.body.appendChild(document.createElement('div'))
+).render(
+  <>
+    <Global styles={globalStyle}/>
+    <Mount/>
+  </>
+)
