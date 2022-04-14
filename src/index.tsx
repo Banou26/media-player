@@ -36,19 +36,48 @@ const chromeStyle = css`
   .bottom {
     align-self: end;
     height: calc(4.8rem + var(--background-padding));
+    width: calc(100% - 4rem);
+    margin: 0 auto;
 
 
     /* subtle background black gradient for scenes with high brightness to properly display white progress bar */
-    font-size: 1.9rem;
+    /* font-size: 1.9rem;
     font-weight: 700;
-    text-align: center;
-    text-shadow: rgb(0 0 0 / 80%) 1px 1px 0;
+    text-align: center; */
+    /* text-shadow: rgb(0 0 0 / 80%) 1px 1px 0; */
     padding-top: var(--background-padding);
     background: linear-gradient(0deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.1) calc(100% - 1rem), rgba(0,0,0,0) 100%);
 
     .progress {
+      position: relative;
       height: .4rem;
       background-color: hsla(0, 100%, 100%, .2);
+      cursor: pointer;
+      .padding {
+        position: absolute;
+        bottom: 0;
+        height: 1.6rem;
+        width: 100%;
+      }
+    }
+
+    .controls {
+      height: 100%;
+      display: grid;
+      align-items: center;
+      grid-template-columns: 5rem 10rem auto;
+
+      .play-button {
+        color: #fff;
+        background-color: transparent;
+        border: none;
+        cursor: pointer;
+      }
+
+      .time {
+        font-family: Roboto;
+        padding-bottom: .5rem;
+      }
     }
   }
 `
@@ -59,14 +88,23 @@ const Chrome = (({ ...rest }) => {
       <div className="bottom">
         <div className="preview"></div>
         <div className="progress">
-          {/* bar displaying the current playback progress */}
-          <div className="play"></div>
+          <div className="padding"></div>
           {/* bar showing the currently loaded progress */}
           <div className="load"></div>
           {/* bar to show when hovering to potentially seek */}
           <div className="hover"></div>
+          {/* bar displaying the current playback progress */}
+          <div className="play"></div>
           <div className="chapters"></div>
           <div className="scrubber"></div>
+        </div>
+        <div className="controls">
+          <button className="play-button" type="button">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-play"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          </button>
+          <div className="time">
+            10:10:10
+          </div>
         </div>
       </div>
     </div>
@@ -79,7 +117,7 @@ const style = css`
   background-color: #111;
 
   video {
-    /* pointer-events: none; */
+    pointer-events: none;
     grid-column: 1;
     grid-row: 1;
 
