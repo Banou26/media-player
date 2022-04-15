@@ -1,5 +1,5 @@
 /// <reference types="@emotion/react/types/css-prop" />
-import { forwardRef, useCallback, useEffect, useRef, useState, VideoHTMLAttributes } from 'react'
+import { ClassAttributes, forwardRef, HTMLAttributes, MouseEventHandler, useCallback, useEffect, useRef, useState, VideoHTMLAttributes } from 'react'
 import { createRoot } from 'react-dom/client'
 import { call } from 'osra'
 import { css, Global } from '@emotion/react'
@@ -21,9 +21,9 @@ const useThrottle = () =>
   }, [])
 
 const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
-  const worker = new Worker('/worker.js')
+  const worker = new Worker('/worker.js', { type: 'module' })
   const { stream: streamOut, info } = await call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream })
-  console.log('info', info)
+
   return {
     info,
 
@@ -33,6 +33,13 @@ const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number
 const chromeStyle = css`
   --background-padding: 2rem;
   display: grid;
+  overflow: hidden;
+
+  &.hide {
+    opacity: 0;
+    cursor: none;
+  }
+
   .bottom {
     align-self: end;
     height: calc(4.8rem + var(--background-padding));
@@ -65,7 +72,21 @@ const chromeStyle = css`
       height: 100%;
       display: grid;
       align-items: center;
-      grid-template-columns: 5rem 10rem auto;
+      grid-template-columns: 5rem 20rem auto 5rem 5rem;
+      grid-gap: 1rem;
+      color: #fff;
+
+      .picture-in-picture {
+        display: grid;
+        justify-items: center;
+        cursor: pointer;
+      }
+
+      .fullscreen {
+        display: grid;
+        justify-items: center;
+        cursor: pointer;
+      }
 
       .play-button {
         color: #fff;
@@ -82,9 +103,32 @@ const chromeStyle = css`
   }
 `
 
-const Chrome = (({ ...rest }) => {
+const Chrome = (({ duration, currentTime, pictureInPicture, fullscreen, ...rest }: { duration?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
+  const [isFullscreen, setFullscreen] = useState(false)
+  const [hidden, setHidden] = useState(false)
+  const [autoHide, setAutoHide] = useState<number>()
+
+  const mouseMove: MouseEventHandler<HTMLDivElement> = (ev) => {
+    setHidden(false)
+    if (autoHide) clearInterval(autoHide)
+    setAutoHide(
+      setTimeout(() => {
+        setHidden(true)
+      }, 5_000) as unknown as number
+    )
+  }
+
+  const mouseOut = () => {
+    setHidden(true)
+  }
+
+  const clickFullscreen = (ev) => {
+    setFullscreen(value => !value)
+    fullscreen(ev)
+  }
+
   return (
-    <div css={chromeStyle} {...rest}>
+    <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
       <div className="bottom">
         <div className="preview"></div>
         <div className="progress">
@@ -103,7 +147,20 @@ const Chrome = (({ ...rest }) => {
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-play"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
           </button>
           <div className="time">
-            10:10:10
+            <span>{new Date((currentTime ?? 0) * 1000).toISOString().substr(11, 8)}</span>
+            <span> / </span>
+            <span>{duration ? new Date(duration * 1000).toISOString().substr(11, 8) : ''}</span>
+          </div>
+          <div></div>
+          <div className="picture-in-picture" onClick={pictureInPicture}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="21" height="14" rx="2" ry="2"></rect><rect x="12.5" y="8.5" width="8" height="6" rx="2" ry="2"></rect></svg>
+          </div>
+          <div className="fullscreen" onClick={clickFullscreen}>
+            {
+              isFullscreen
+                ? <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-minimize"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"></path></svg>
+                : <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-maximize"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path></svg>
+            }
           </div>
         </div>
       </div>
@@ -132,7 +189,9 @@ const style = css`
   }
 `
 
-const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { mediaSource?: MediaSource }>(({ mediaSource }, ref) => {
+const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { mediaSource?: MediaSource, duration?: number }>(({ mediaSource, duration }, ref) => {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>()
   const [sourceUrl, setSourceUrl] = useState<string>()
 
   useEffect(() => {
@@ -151,23 +210,42 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   const timeUpdate: React.DOMAttributes<HTMLVideoElement>['onTimeUpdate'] = (ev) => {
 
   }
+
+  const pictureInPicture = () => {
+    if (document.pictureInPictureElement) return document.exitPictureInPicture()
+    videoRef.current?.requestPictureInPicture()
+  }
+
+  const fullscreen = () => {
+    if (document.fullscreenElement) return document.exitFullscreen()
+    // @ts-ignore
+    containerRef.current?.requestFullscreen()
+  }
+
+  const refFunction: ClassAttributes<HTMLVideoElement>['ref'] = (element) => {
+    if (typeof ref === 'function') ref(element)
+    if (ref && 'current' in ref) ref.current = element
+    videoRef.current = element ?? undefined
+  }
   
   return (
-    <div css={style}>
-      <video ref={ref} src={sourceUrl} onWaiting={waiting} onSeeking={seeking} onTimeUpdate={timeUpdate}/>
-      <Chrome className="chrome"/>
+    <div css={style} ref={containerRef}>
+      <video ref={refFunction} src={sourceUrl} onWaiting={waiting} onSeeking={seeking} onTimeUpdate={timeUpdate}/>
+      <Chrome className="chrome" duration={duration} pictureInPicture={pictureInPicture} fullscreen={fullscreen}/>
     </div>
   )
 })
 
 const FKNMediaPlayer = ({ id, size, stream: inStream }: { id?: string, size?: number, stream?: ReadableStream<Uint8Array> }) => {
   const [transmuxer, setTransmuxer] = useState<Awaited<ReturnType<typeof makeTransmuxer>>>()
+  const [duration, setDuration] = useState<number>()
   const [mediaSource] = useState(new MediaSource())
 
-  // useEffect(() => {
-  //   if (!duration) return
-  //   mediaSource.duration = duration
-  // }, [duration])
+  useEffect(() => {
+    if (!transmuxer) return
+    setDuration(transmuxer.info.input.duration)
+    mediaSource.duration = transmuxer.info.input.duration
+  }, [transmuxer])
 
   // sourceBuffer.mode = 'segments'
 
@@ -180,11 +258,11 @@ const FKNMediaPlayer = ({ id, size, stream: inStream }: { id?: string, size?: nu
   // }, [transmuxer])
 
   useEffect(() => {
-    if (!size || !inStream) return
-    makeTransmuxer({ size, stream: inStream }).then(setTransmuxer)
+    if (!id || !size || !inStream) return
+    makeTransmuxer({ id, size, stream: inStream }).then(setTransmuxer)
   }, [size, inStream])
 
-  return <FKNVideo mediaSource={mediaSource}/>
+  return <FKNVideo duration={duration} mediaSource={mediaSource}/>
 }
 
 export default FKNMediaPlayer
@@ -197,17 +275,21 @@ const mountStyle = css`
 `
 
 const Mount = () => {
-  const [stream, setStream] = useState<ReadableStream<Uint8Array> | null>()
+  const [size, setSize] = useState<number>()
+  const [stream, setStream] = useState<ReadableStream<Uint8Array>>()
 
   useEffect(() => {
     fetch('./video.mkv')
-      .then(res => res.body)
-      .then(setStream)
+      .then(({ headers, body }) => {
+        if (!body || !headers.get('Content-Length')) throw new Error('no stream or Content-Length returned from the response')
+        setSize(Number(headers.get('Content-Length')))
+        setStream(body)
+      })
   }, [])
 
   return (
     <div css={mountStyle}>
-      <FKNMediaPlayer />
+      <FKNMediaPlayer id={'test'} size={size} stream={stream}/>
     </div>
   )
 }
