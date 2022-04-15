@@ -22,22 +22,53 @@ const useThrottle = () =>
 
 const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
   const worker = new Worker('/worker.js', { type: 'module' })
-  const { stream: streamOut, info } = await call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream })
+  const { stream: streamOut, info, mime, mp4info } = await call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream })
 
   return {
     info,
+    mime,
+    mp4info
+  }
+}
 
+const makeSourceBufferHandler = ({ video, transmuxer, sourceBuffer }: { video: HTMLVideoElement, transmuxer: ReturnType<typeof makeTransmuxer>, sourceBuffer: SourceBuffer }) => {
+
+
+  return {
+    
   }
 }
 
 const chromeStyle = css`
   --background-padding: 2rem;
   display: grid;
+  grid-template-rows: auto auto auto;
   overflow: hidden;
 
   &.hide {
-    opacity: 0;
     cursor: none;
+
+    .bottom {
+      opacity: 0;
+    }
+  }
+
+  .center {
+    align-self: center;
+    justify-self: center;
+
+    /* .loading {
+      @keyframes rotation {
+        from {
+          transform: rotate(90deg) scale(3, 3);
+        }
+        to {
+          transform: rotate(450deg) scale(3, 3);
+        }
+      }
+      animation: rotation 1s steps(8) infinite;
+      transform-origin: 50% 50%;
+    } */
   }
 
   .bottom {
@@ -103,7 +134,7 @@ const chromeStyle = css`
   }
 `
 
-const Chrome = (({ duration, currentTime, pictureInPicture, fullscreen, ...rest }: { duration?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
+const Chrome = (({ loading, duration, currentTime, pictureInPicture, fullscreen, ...rest }: { loading?: boolean, duration?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
   const [isFullscreen, setFullscreen] = useState(false)
   const [hidden, setHidden] = useState(false)
   const [autoHide, setAutoHide] = useState<number>()
@@ -129,6 +160,48 @@ const Chrome = (({ duration, currentTime, pictureInPicture, fullscreen, ...rest 
 
   return (
     <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
+      <div></div>
+      <div className="center">
+        {
+          loading
+            ? (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                style={{
+                  display: 'block',
+                  shapeRendering: 'auto',
+                  animationPlayState: 'running',
+                  animationDelay: '0s',
+                }}
+                width="100" height="100"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="xMidYMid"
+                >
+                <circle
+                  cx="50"
+                  cy="50"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="9"
+                  r="35"
+                  strokeDasharray="164.93361431346415 56.97787143782138"
+                  style={{ animationPlayState: 'running', animationDelay: '0s' }}>
+                  <animateTransform
+                    attributeName="transform"
+                    type="rotate"
+                    repeatCount="indefinite"
+                    dur="1s"
+                    values="0 50 50;360 50 50"
+                    keyTimes="0;1"
+                    style={{ animationPlayState: 'running', animationDelay: '0s' }}
+                  />
+                </circle>
+              </svg>
+            )
+            : null
+        }
+        {/* <svg className="loading" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line strokeOpacity="1" x1="12" y1="2" x2="12" y2="6"></line><line strokeOpacity="0.875" x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line><line strokeOpacity="0.75" x1="18" y1="12" x2="22" y2="12"></line><line strokeOpacity="0.625" x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line strokeOpacity="0.5" x1="12" y1="18" x2="12" y2="22"></line><line strokeOpacity="0.375" x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line strokeOpacity="0.25" x1="2" y1="12" x2="6" y2="12"></line><line strokeOpacity="0.125" x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line></svg> */}
+      </div>
       <div className="bottom">
         <div className="preview"></div>
         <div className="progress">
@@ -190,6 +263,7 @@ const style = css`
 `
 
 const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { mediaSource?: MediaSource, duration?: number }>(({ mediaSource, duration }, ref) => {
+  const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>()
   const [sourceUrl, setSourceUrl] = useState<string>()
@@ -200,7 +274,7 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   }, [mediaSource])
 
   const waiting: React.DOMAttributes<HTMLVideoElement>['onWaiting'] = (ev) => {
-
+    setLoading(true)
   }
 
   const seeking: React.DOMAttributes<HTMLVideoElement>['onSeeking'] = (ev) => {
@@ -208,7 +282,7 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   }
 
   const timeUpdate: React.DOMAttributes<HTMLVideoElement>['onTimeUpdate'] = (ev) => {
-
+    setLoading(false)
   }
 
   const pictureInPicture = () => {
@@ -231,7 +305,7 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   return (
     <div css={style} ref={containerRef}>
       <video ref={refFunction} src={sourceUrl} onWaiting={waiting} onSeeking={seeking} onTimeUpdate={timeUpdate}/>
-      <Chrome className="chrome" duration={duration} pictureInPicture={pictureInPicture} fullscreen={fullscreen}/>
+      <Chrome className="chrome" loading={loading} duration={duration} pictureInPicture={pictureInPicture} fullscreen={fullscreen}/>
     </div>
   )
 })
@@ -240,6 +314,7 @@ const FKNMediaPlayer = ({ id, size, stream: inStream }: { id?: string, size?: nu
   const [transmuxer, setTransmuxer] = useState<Awaited<ReturnType<typeof makeTransmuxer>>>()
   const [duration, setDuration] = useState<number>()
   const [mediaSource] = useState(new MediaSource())
+  const [sourceBuffer, setSourceBuffer] = useState<SourceBuffer>()
 
   useEffect(() => {
     if (!transmuxer) return
@@ -247,15 +322,20 @@ const FKNMediaPlayer = ({ id, size, stream: inStream }: { id?: string, size?: nu
     mediaSource.duration = transmuxer.info.input.duration
   }, [transmuxer])
 
-  // sourceBuffer.mode = 'segments'
 
-  // useEffect(() => {
-  //   mediaSource.addEventListener(
-  //     'sourceopen',
-  //     () => resolve(mediaSource.addSourceBuffer(mime)),
-  //     { once: true }
-  //   )
-  // }, [transmuxer])
+  useEffect(() => {
+    if (!transmuxer) return
+    console.log('mime', transmuxer.mime)
+    mediaSource.addEventListener(
+      'sourceopen',
+      () => {
+        const sourceBuffer = mediaSource.addSourceBuffer(transmuxer.mime)
+        sourceBuffer.mode = 'segments'
+        setSourceBuffer(sourceBuffer)
+      },
+      { once: true }
+    )
+  }, [transmuxer])
 
   useEffect(() => {
     if (!id || !size || !inStream) return

@@ -1,3 +1,4 @@
+import type { MP4Info } from './mp4box'
 import { createFile } from 'mp4box'
 import { openDB, DBSchema } from 'idb'
 import { makeCallListener, registerListener } from 'osra'
@@ -40,7 +41,7 @@ export const db =
     }
   })
 
-const makeMp4Extracter = (stream: ReadableStream<Uint8Array>) => {
+const makeMp4Extracter = async (stream: ReadableStream<Uint8Array>) => {
   const reader = stream.getReader()
   const mp4boxfile = createFile()
   const chunks = []
@@ -82,20 +83,24 @@ const makeMp4Extracter = (stream: ReadableStream<Uint8Array>) => {
     }
   }
 
-  let mime = 'video/mp4; codecs=\"'
-  let info
+  
 
-  mp4boxfile.onReady = (_info) => {
-    console.log('mp4box ready info', _info)
-    info = _info
-    for (let i = 0; i < info.tracks.length; i++) {
-      if (i !== 0) mime += ','
-      mime += info.tracks[i].codec
+  const info = new Promise<{ mime: string, info: MP4Info }>(resolve => {
+    mp4boxfile.onReady = (_info) => {
+      let mime = 'video/mp4; codecs=\"'
+      let info
+      console.log('mp4box ready info', _info)
+      info = _info
+      for (let i = 0; i < info.tracks.length; i++) {
+        if (i !== 0) mime += ','
+        mime += info.tracks[i].codec
+      }
+      mime += '\"'
+      mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
+      mp4boxfile.start()
+      resolve({ mime, info })
     }
-    mime += '\"'
-    mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
-    mp4boxfile.start()
-  }
+  })
 
   let first = false
   let i = 0
@@ -106,10 +111,6 @@ const makeMp4Extracter = (stream: ReadableStream<Uint8Array>) => {
     // console.log('arrayBuffer', arrayBuffer)
     // if (i > 5) done = true
     if (done) {
-      // resultBuffer = resultBuffer.slice(0, processedBytes)
-      const el = document.createElement('div')
-      el.innerText = 'Done'
-      document.body.appendChild(el)
       return
     }
 
@@ -130,15 +131,16 @@ const makeMp4Extracter = (stream: ReadableStream<Uint8Array>) => {
 
   await read()
 
+  return info
 }
 
 const resolvers = {
   'REMUX': makeCallListener(async ({ id, size, stream: inStream }: { id: string, size: number, stream: ReadableStream<Uint8Array> }, extra) => {
     const { stream, info } = await remux({ size, stream: inStream, autoStart: true })
-    const reader = stream.getReader()
-    
+    // const reader = stream.getReader()
+    const { mime, info: mp4info } = await makeMp4Extracter(stream)
 
-    return { info }
+    return { mime, info, mp4info }
   })
 }
 
