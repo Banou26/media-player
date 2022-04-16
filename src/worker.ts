@@ -5,7 +5,7 @@ import { makeCallListener, registerListener } from 'osra'
 import { remux } from '@banou26/oz-libav'
 
 export type Chunk = {
-  arrayBuffer: ArrayBuffer
+  arrayBuffer: Uint8Array // ArrayBuffer
   keyframeIndex: number
   startTime: number
   endTime: number
@@ -16,20 +16,22 @@ export type Video = {
   filename?: string
   date: Date
   size: number
+  headerChunks: Chunk[]
+  chunks: Chunk[]
   chunkSize: number
 }
 
-interface VideoDB extends DBSchema {
+export interface VideoDB extends DBSchema {
   index: {
     key: IDBValidKey
-    value: Video[]
+    value: Video
     indexes: {
       id: IDBValidKey
     }
   }
   chunks: {
     key: IDBValidKey
-    value: ArrayBuffer[]
+    value: ArrayBuffer
   }
 }
 
@@ -41,14 +43,15 @@ export const db =
     }
   })
 
-const makeMp4Extracter = async (stream: ReadableStream<Uint8Array>) => {
+const makeMp4Extracter = async ({ id, stream, size, headerChunks, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, headerChunks: Chunk[], newChunk: (chunk: Chunk) => void }) => {
+  const date = new Date()
   const reader = stream.getReader()
   const mp4boxfile = createFile()
   const chunks = []
   let processedBytes = 0
 
   mp4boxfile.onError = e => console.error('onError', e)
-  mp4boxfile.onSamples = (id, user, samples) => {
+  mp4boxfile.onSamples = async (_id, user, samples) => {
     // console.log('onSamples', id, user, samples)
     const groupBy = (xs, key) => {
       return xs.reduce((rv, x) => {
@@ -67,8 +70,8 @@ const makeMp4Extracter = async (stream: ReadableStream<Uint8Array>) => {
       const _endTime = lastSample.cts / lastSample.timescale
 
       chunks[firstSample.moof_number - 1] = {
-        firstSample,
-        lastSample,
+        // firstSample,
+        // lastSample,
         keyframeIndex: firstSample.moof_number - 1,
         startTime,
         // Some files have faulty fragments that contain the same start/end timestamps
@@ -78,6 +81,8 @@ const makeMp4Extracter = async (stream: ReadableStream<Uint8Array>) => {
             ? _endTime + 0.02
             : _endTime
       }
+      // await (await db).put('index', { id, date, size, headerChunks, chunks, chunkSize: 0 })
+      newChunk(chunks[firstSample.moof_number - 1])
       // needed for mp4box to not keep a reference to the arrayBuffers creating a memory leak
       mp4boxfile.releaseUsedSamples(1, lastSample.number)
     }
@@ -119,6 +124,9 @@ const makeMp4Extracter = async (stream: ReadableStream<Uint8Array>) => {
     // const buffer = arrayBuffer.slice(0).buffer
     // @ts-ignore
     buffer.fileStart = processedBytes
+    if (i >= headerChunks.length) {
+      // ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
+    }
     mp4boxfile.appendBuffer(buffer)
     // resultBuffer.set(arrayBuffer, processedBytes)
     processedBytes += arrayBuffer.byteLength
@@ -135,12 +143,21 @@ const makeMp4Extracter = async (stream: ReadableStream<Uint8Array>) => {
 }
 
 const resolvers = {
-  'REMUX': makeCallListener(async ({ id, size, stream: inStream }: { id: string, size: number, stream: ReadableStream<Uint8Array> }, extra) => {
-    const { stream, info } = await remux({ size, stream: inStream, autoStart: true })
+  'REMUX': makeCallListener(async ({ id, size, stream: inStream, newChunk }: { id: string, size: number, stream: ReadableStream<Uint8Array>, newChunk: (chunk: Chunk) => void }, extra) => {
+    const { stream, info, headerChunks } = await remux({ size, stream: inStream, autoStart: true })
+    console.log('headerChunks', headerChunks)
     // const reader = stream.getReader()
-    const { mime, info: mp4info } = await makeMp4Extracter(stream)
-
-    return { mime, info, mp4info }
+    const { mime, info: mp4info } = await makeMp4Extracter({ id, stream, size, headerChunks, newChunk })
+    return {
+      mime,
+      info,
+      mp4info,
+      headerChunks:
+        headerChunks.map(({ arrayBuffer, ...rest }) => ({
+          ...rest,
+          arrayBuffer: arrayBuffer.buffer
+        }))
+    }
   })
 }
 

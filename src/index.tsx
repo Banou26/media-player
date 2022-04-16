@@ -1,10 +1,13 @@
 /// <reference types="@emotion/react/types/css-prop" />
-import { ClassAttributes, forwardRef, HTMLAttributes, MouseEventHandler, useCallback, useEffect, useRef, useState, VideoHTMLAttributes } from 'react'
+import type { Chunk, Resolvers as WorkerResolvers, VideoDB } from './worker'
+
+import { ClassAttributes, forwardRef, HTMLAttributes, MouseEventHandler, useCallback, useEffect, useMemo, useRef, useState, VideoHTMLAttributes } from 'react'
 import { createRoot } from 'react-dom/client'
 import { call } from 'osra'
 import { css, Global } from '@emotion/react'
+import { appendBuffer, updateSourceBuffer as _updateSourceBuffer } from './utils'
+import { openDB } from 'idb'
 
-import { Resolvers as WorkerResolvers } from './worker'
 
 const useThrottle = () =>
   useCallback((func, limit) => {
@@ -20,23 +23,123 @@ const useThrottle = () =>
     }
   }, [])
 
-const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
-  const worker = new Worker('/worker.js', { type: 'module' })
-  const { stream: streamOut, info, mime, mp4info } = await call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream })
+// const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
+//   const [loadedTime, setLoadedTime] = useState()
+//   const worker = new Worker('/worker.js', { type: 'module' })
+//   const newChunk = (chunk: Chunk) => {
+//     console.log('new chunk', chunkInfo)
+//     setLoadedTime(chunk.endTime)
+//   }
+//   const { stream: streamOut, info, mime, mp4info } = await call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream, newChunk })
+//   return {
+//     loadedTime,
+//     info,
+//     mime: mp4info.mime,
+//     mp4info
+//   }
+// }
+
+const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: number, stream?: ReadableStream }) => {
+  // const [loadedTime, setLoadedTime] = useState<number>()
+  const [info, setInfo] = useState()
+  const [mime, setMime] = useState<string>()
+  const [mp4Info, setMp4Info] = useState()
+  const [headerChunk, setHeaderChunk] = useState<Uint8Array>()
+  const [chunks, setChunks] = useState<Chunk[]>([])
+  const loadedTime = useMemo(() => chunks.at(-1)?.endTime, [chunks])
+  const worker = useMemo(() => new Worker('/worker.js', { type: 'module' }), [])
+
+  const newChunk = (chunk: Chunk) => {
+    setChunks(chunks => [...chunks, chunk])
+    console.log('new chunk', chunk)
+    // setLoadedTime(chunk.endTime)
+  }
+
+  useEffect(() => {
+    if (!id || !size || !inStream) return
+    call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream, newChunk })
+      .then(({ stream: streamOut, info, mime, mp4info, headerChunks }) => {
+        console.log('info', info)
+        setInfo(info)
+        setMime(mp4info.mime)
+        setMp4Info(mp4info)
+        const headerChunk = new Uint8Array(headerChunks.map(chunk => chunk.arrayBuffer.byteLength).reduce((acc, length) => acc + length, 0))
+        let currentSize = 0
+        for (const chunk of headerChunks) {
+          headerChunk.set(chunk.arrayBuffer, currentSize)
+          currentSize += chunk.arrayBuffer.byteLength
+        }
+        setHeaderChunk(headerChunk)
+      })
+  }, [id, size, inStream])
 
   return {
+    loadedTime,
     info,
     mime,
-    mp4info
+    mp4Info,
+    headerChunk,
+    chunks
   }
 }
 
-const makeSourceBufferHandler = ({ video, transmuxer, sourceBuffer }: { video: HTMLVideoElement, transmuxer: ReturnType<typeof makeTransmuxer>, sourceBuffer: SourceBuffer }) => {
+export const db =
+  openDB<VideoDB>('fkn-media-player', 1, {
+    upgrade(db) {
+      db.createObjectStore('index', { keyPath: 'id' })
+      db.createObjectStore('chunks')
+    }
+  })
 
+const useSourceBuffer = ({ id, info, mime, headerChunk, chunks, video, currentTime }: { id?: string, info?: any, mime?: string, headerChunk?: Uint8Array, chunks: Chunk[], video: HTMLVideoElement, currentTime: number }) => {
+  const [duration, setDuration] = useState<number>()
+  const [mediaSource] = useState(new MediaSource())
+  const [sourceUrl] = useState<string>(URL.createObjectURL(mediaSource))
+  const [sourceBuffer, setSourceBuffer] = useState<SourceBuffer>()
+  const updateSourceBuffer = useMemo(() => {
+    // console.log('updateSourceBuffer memo', sourceBuffer)
+    if (!sourceBuffer) return
+    return _updateSourceBuffer(sourceBuffer, async (index) => {
+      const arrayBuffer = await (await db).get('chunks', `${id}-${index}`)
+      if (!arrayBuffer) return
+      return new Uint8Array(arrayBuffer)
+    })
+  }, [sourceBuffer])
 
-  return {
-    
-  }
+  useEffect(() => {
+    if (!id || !info || !mime || !headerChunk) return
+    const registerSourceBuffer = async () => {
+      mediaSource.duration = info.input.duration
+      const sourceBuffer = mediaSource.addSourceBuffer(mime)
+      console.log('sourceopen', sourceBuffer, headerChunk)
+      sourceBuffer.mode = 'segments'
+      setSourceBuffer(sourceBuffer)
+      setDuration(info.input.duration)
+      const firstChunk = await (await db).get('chunks', '1')
+      if (!firstChunk) throw new Error('FUCKKKKKKKK')
+      const headChunk = new Uint8Array(headerChunk.byteLength + (firstChunk?.byteLength ?? 0))
+      headChunk.set(headerChunk)
+      headChunk.set(new Uint8Array(firstChunk), headerChunk.byteLength)
+      await appendBuffer(sourceBuffer)(headChunk)
+    }
+    if(mediaSource.readyState === 'closed') {
+      mediaSource.addEventListener(
+        'sourceopen',
+        () => registerSourceBuffer(),
+        { once: true }
+      )
+    } else {
+      registerSourceBuffer()
+    }
+  }, [id, info, mime, headerChunk])
+
+  useEffect(() => {
+    if (!updateSourceBuffer) return
+    // console.log('update source buffer', currentTime, chunks)
+    updateSourceBuffer({ currentTime, chunks })
+  }, [currentTime, updateSourceBuffer, chunks])
+
+  return { duration, mediaSource, sourceUrl, sourceBuffer }
 }
 
 const chromeStyle = css`
@@ -91,6 +194,12 @@ const chromeStyle = css`
       height: .4rem;
       background-color: hsla(0, 100%, 100%, .2);
       cursor: pointer;
+      .load {
+        background-color: hsla(0, 100%, 100%, .4);
+        position: absolute;
+        bottom: 0;
+        height: .4rem;
+      }
       .padding {
         position: absolute;
         bottom: 0;
@@ -134,7 +243,7 @@ const chromeStyle = css`
   }
 `
 
-const Chrome = (({ loading, duration, currentTime, pictureInPicture, fullscreen, ...rest }: { loading?: boolean, duration?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
+const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, ...rest }: { loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
   const [isFullscreen, setFullscreen] = useState(false)
   const [hidden, setHidden] = useState(false)
   const [autoHide, setAutoHide] = useState<number>()
@@ -207,7 +316,7 @@ const Chrome = (({ loading, duration, currentTime, pictureInPicture, fullscreen,
         <div className="progress">
           <div className="padding"></div>
           {/* bar showing the currently loaded progress */}
-          <div className="load"></div>
+          <div className="load" style={{ width: `${(1 / ((duration ?? 0) / (loadedTime ?? 0))) * 100}%` }}></div>
           {/* bar to show when hovering to potentially seek */}
           <div className="hover"></div>
           {/* bar displaying the current playback progress */}
@@ -262,16 +371,13 @@ const style = css`
   }
 `
 
-const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { mediaSource?: MediaSource, duration?: number }>(({ mediaSource, duration }, ref) => {
+const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { id?: string, size?: number, stream?: ReadableStream<Uint8Array> }>(({ id, size, stream: inStream }, ref) => {
+  const { loadedTime, mime, info, headerChunk, chunks } = useTransmuxer({ id, size, stream: inStream })
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>()
-  const [sourceUrl, setSourceUrl] = useState<string>()
-
-  useEffect(() => {
-    if (!mediaSource) return
-    setSourceUrl(URL.createObjectURL(mediaSource))
-  }, [mediaSource])
+  const [currentTime, setCurrentTime] = useState(0)
+  const { duration, sourceUrl } = useSourceBuffer({ id, mime, info, headerChunk, chunks, currentTime })
 
   const waiting: React.DOMAttributes<HTMLVideoElement>['onWaiting'] = (ev) => {
     setLoading(true)
@@ -282,6 +388,7 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   }
 
   const timeUpdate: React.DOMAttributes<HTMLVideoElement>['onTimeUpdate'] = (ev) => {
+    setCurrentTime(videoRef.current?.currentTime ?? 0)
     setLoading(false)
   }
 
@@ -304,45 +411,62 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   
   return (
     <div css={style} ref={containerRef}>
-      <video ref={refFunction} src={sourceUrl} onWaiting={waiting} onSeeking={seeking} onTimeUpdate={timeUpdate}/>
-      <Chrome className="chrome" loading={loading} duration={duration} pictureInPicture={pictureInPicture} fullscreen={fullscreen}/>
+      <video
+        ref={refFunction}
+        src={sourceUrl}
+        onWaiting={waiting}
+        onSeeking={seeking}
+        onTimeUpdate={timeUpdate}
+        autoPlay={true}
+      />
+      <Chrome
+        className="chrome"
+        loading={loading}
+        duration={duration}
+        loadedTime={loadedTime}
+        pictureInPicture={pictureInPicture}
+        fullscreen={fullscreen}
+      />
     </div>
   )
 })
 
-const FKNMediaPlayer = ({ id, size, stream: inStream }: { id?: string, size?: number, stream?: ReadableStream<Uint8Array> }) => {
-  const [transmuxer, setTransmuxer] = useState<Awaited<ReturnType<typeof makeTransmuxer>>>()
-  const [duration, setDuration] = useState<number>()
-  const [mediaSource] = useState(new MediaSource())
-  const [sourceBuffer, setSourceBuffer] = useState<SourceBuffer>()
+const FKNMediaPlayer = ({ id, size, stream }: { id?: string, size?: number, stream?: ReadableStream<Uint8Array> }) => {
+  // const { loadedTime, mime, info, headerChunk } = useTransmuxer({ id, size, stream: inStream })
+  // const [transmuxer, setTransmuxer] = useState<Awaited<ReturnType<typeof makeTransmuxer>>>()
+  // const [duration, setDuration] = useState<number>()
+  // const [mediaSource] = useState(new MediaSource())
+  // const [sourceBuffer, setSourceBuffer] = useState<SourceBuffer>()
 
-  useEffect(() => {
-    if (!transmuxer) return
-    setDuration(transmuxer.info.input.duration)
-    mediaSource.duration = transmuxer.info.input.duration
-  }, [transmuxer])
+  // useEffect(() => {
+  //   if (!info) return
+  //   setDuration(info.input.duration)
+  //   mediaSource.duration = info.input.duration
+  // }, [info])
 
+  // useEffect(() => {
+  //   if (!info || !mime || !headerChunk) return
+  //   mediaSource.addEventListener(
+  //     'sourceopen',
+  //     () => {
+  //       mediaSource.duration = info.input.duration
+  //       const sourceBuffer = mediaSource.addSourceBuffer(mime)
+  //       sourceBuffer.mode = 'segments'
+  //       setSourceBuffer(sourceBuffer)
+  //       sourceBuffer.appendBuffer(headerChunk)
+  //       setDuration(info.input.duration)
+  //     },
+  //     { once: true }
+  //   )
+  // }, [info, mime, headerChunk])
 
-  useEffect(() => {
-    if (!transmuxer) return
-    console.log('mime', transmuxer.mime)
-    mediaSource.addEventListener(
-      'sourceopen',
-      () => {
-        const sourceBuffer = mediaSource.addSourceBuffer(transmuxer.mime)
-        sourceBuffer.mode = 'segments'
-        setSourceBuffer(sourceBuffer)
-      },
-      { once: true }
-    )
-  }, [transmuxer])
+  // useEffect(() => {
+  //   if (!id || !size || !inStream) return
+  //   makeTransmuxer({ id, size, stream: inStream }).then(setTransmuxer)
+  // }, [size, inStream])
 
-  useEffect(() => {
-    if (!id || !size || !inStream) return
-    makeTransmuxer({ id, size, stream: inStream }).then(setTransmuxer)
-  }, [size, inStream])
-
-  return <FKNVideo duration={duration} mediaSource={mediaSource}/>
+  return <FKNVideo id={id} size={size} stream={stream}/>
+  // return <FKNVideo duration={duration} loadedTime={loadedTime} mediaSource={mime && headerChunk ? mediaSource : undefined}/>
 }
 
 export default FKNMediaPlayer
