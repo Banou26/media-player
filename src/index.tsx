@@ -1,7 +1,7 @@
 /// <reference types="@emotion/react/types/css-prop" />
 import type { Chunk, Resolvers as WorkerResolvers, VideoDB } from './worker'
 
-import { ClassAttributes, forwardRef, HTMLAttributes, MouseEventHandler, useCallback, useEffect, useMemo, useRef, useState, VideoHTMLAttributes } from 'react'
+import { ClassAttributes, forwardRef, HTMLAttributes, MouseEventHandler, ReactEventHandler, SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState, VideoHTMLAttributes } from 'react'
 import { createRoot } from 'react-dom/client'
 import { call } from 'osra'
 import { css, Global } from '@emotion/react'
@@ -51,7 +51,7 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
 
   const newChunk = (chunk: Chunk) => {
     setChunks(chunks => [...chunks, chunk])
-    console.log('new chunk', chunk)
+    // console.log('new chunk', chunk)
     // setLoadedTime(chunk.endTime)
   }
 
@@ -145,7 +145,7 @@ const useSourceBuffer = ({ id, info, mime, headerChunk, chunks, video, currentTi
 const chromeStyle = css`
   --background-padding: 2rem;
   display: grid;
-  grid-template-rows: auto auto auto;
+  grid-template-rows: 1fr;
   overflow: hidden;
 
   &.hide {
@@ -156,36 +156,25 @@ const chromeStyle = css`
     }
   }
 
-  .center {
-    align-self: center;
-    justify-self: center;
-
-    /* .loading {
-      @keyframes rotation {
-        from {
-          transform: rotate(90deg) scale(3, 3);
-        }
-        to {
-          transform: rotate(450deg) scale(3, 3);
-        }
-      }
-      animation: rotation 1s steps(8) infinite;
-      transform-origin: 50% 50%;
-    } */
+  .overlay {
+    flex: 1;
+    display: grid;
+    height: 100%;
+    width: 100%;
+    justify-items: center;
+    align-items: center;
   }
 
   .bottom {
+    flex: 1;
     align-self: end;
     height: calc(4.8rem + var(--background-padding));
-    width: calc(100% - 4rem);
+    width: 100%;
+    padding: 0 2rem;
     margin: 0 auto;
 
 
     /* subtle background black gradient for scenes with high brightness to properly display white progress bar */
-    /* font-size: 1.9rem;
-    font-weight: 700;
-    text-align: center; */
-    /* text-shadow: rgb(0 0 0 / 80%) 1px 1px 0; */
     padding-top: var(--background-padding);
     background: linear-gradient(0deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.1) calc(100% - 1rem), rgba(0,0,0,0) 100%);
 
@@ -196,6 +185,12 @@ const chromeStyle = css`
       cursor: pointer;
       .load {
         background-color: hsla(0, 100%, 100%, .4);
+        position: absolute;
+        bottom: 0;
+        height: .4rem;
+      }
+      .play {
+        background-color: hsla(0, 100%, 50%, .8);
         position: absolute;
         bottom: 0;
         height: .4rem;
@@ -243,10 +238,11 @@ const chromeStyle = css`
   }
 `
 
-const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, ...rest }: { loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
+const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, play, ...rest }: { isPlaying?: boolean, loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement>, play: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
   const [isFullscreen, setFullscreen] = useState(false)
   const [hidden, setHidden] = useState(false)
   const [autoHide, setAutoHide] = useState<number>()
+  const isPictureInPictureEnabled = useMemo(() => document.pictureInPictureEnabled, [])
 
   const mouseMove: MouseEventHandler<HTMLDivElement> = (ev) => {
     setHidden(false)
@@ -262,6 +258,10 @@ const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture,
     setHidden(true)
   }
 
+  const clickPlay = (ev) => {
+    play(ev)
+  }
+
   const clickFullscreen = (ev) => {
     setFullscreen(value => !value)
     fullscreen(ev)
@@ -269,8 +269,7 @@ const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture,
 
   return (
     <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
-      <div></div>
-      <div className="center">
+      <div className="overlay" onClick={clickPlay}>
         {
           loading
             ? (
@@ -309,7 +308,6 @@ const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture,
             )
             : null
         }
-        {/* <svg className="loading" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line strokeOpacity="1" x1="12" y1="2" x2="12" y2="6"></line><line strokeOpacity="0.875" x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line><line strokeOpacity="0.75" x1="18" y1="12" x2="22" y2="12"></line><line strokeOpacity="0.625" x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line strokeOpacity="0.5" x1="12" y1="18" x2="12" y2="22"></line><line strokeOpacity="0.375" x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line strokeOpacity="0.25" x1="2" y1="12" x2="6" y2="12"></line><line strokeOpacity="0.125" x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line></svg> */}
       </div>
       <div className="bottom">
         <div className="preview"></div>
@@ -320,13 +318,17 @@ const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture,
           {/* bar to show when hovering to potentially seek */}
           <div className="hover"></div>
           {/* bar displaying the current playback progress */}
-          <div className="play"></div>
+          <div className="play" style={{ width: `${(1 / ((duration ?? 0) / (currentTime ?? 0))) * 100}%` }}></div>
           <div className="chapters"></div>
           <div className="scrubber"></div>
         </div>
         <div className="controls">
-          <button className="play-button" type="button">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-play"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          <button className="play-button" type="button" onClick={clickPlay}>
+            {
+              isPlaying
+                ? <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-pause"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                : <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="feather feather-play"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            }
           </button>
           <div className="time">
             <span>{new Date((currentTime ?? 0) * 1000).toISOString().substr(11, 8)}</span>
@@ -334,9 +336,15 @@ const Chrome = (({ loading, duration, loadedTime, currentTime, pictureInPicture,
             <span>{duration ? new Date(duration * 1000).toISOString().substr(11, 8) : ''}</span>
           </div>
           <div></div>
-          <div className="picture-in-picture" onClick={pictureInPicture}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="21" height="14" rx="2" ry="2"></rect><rect x="12.5" y="8.5" width="8" height="6" rx="2" ry="2"></rect></svg>
-          </div>
+          {
+            isPictureInPictureEnabled
+              ? (
+                <div className="picture-in-picture" onClick={pictureInPicture}>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="21" height="14" rx="2" ry="2"></rect><rect x="12.5" y="8.5" width="8" height="6" rx="2" ry="2"></rect></svg>
+                </div>
+              )
+              : null
+          }
           <div className="fullscreen" onClick={clickFullscreen}>
             {
               isFullscreen
@@ -376,6 +384,7 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>()
+  const [isPlaying, setIsPlaying] = useState(!(videoRef?.current?.paused ?? true))
   const [currentTime, setCurrentTime] = useState(0)
   const { duration, sourceUrl } = useSourceBuffer({ id, mime, info, headerChunk, chunks, currentTime })
 
@@ -392,6 +401,10 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
     setLoading(false)
   }
 
+  const playbackUpdate = (playing: boolean) => (ev: SyntheticEvent<HTMLVideoElement, Event>) => {
+    setIsPlaying(playing)
+  }
+
   const pictureInPicture = () => {
     if (document.pictureInPictureElement) return document.exitPictureInPicture()
     videoRef.current?.requestPictureInPicture()
@@ -401,6 +414,11 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
     if (document.fullscreenElement) return document.exitFullscreen()
     // @ts-ignore
     containerRef.current?.requestFullscreen()
+  }
+
+  const play = async () => {
+    if (!isPlaying) await videoRef.current?.play()
+    else await videoRef.current?.pause()
   }
 
   const refFunction: ClassAttributes<HTMLVideoElement>['ref'] = (element) => {
@@ -417,15 +435,21 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
         onWaiting={waiting}
         onSeeking={seeking}
         onTimeUpdate={timeUpdate}
+        onPlay={playbackUpdate(true)}
+        onPause={playbackUpdate(false)}
         autoPlay={true}
       />
       <Chrome
         className="chrome"
+        isPlaying={isPlaying}
+        video={videoRef}
         loading={loading}
         duration={duration}
+        currentTime={currentTime}
         loadedTime={loadedTime}
         pictureInPicture={pictureInPicture}
         fullscreen={fullscreen}
+        play={play}
       />
     </div>
   )
