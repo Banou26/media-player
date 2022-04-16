@@ -1,4 +1,4 @@
-import { Chunk } from './worker'
+import type { Chunk } from './worker'
 
 // todo: reimplement this into a ReadableByteStream https://web.dev/streams/ once FF gets support
 export const bufferStream = ({ stream, size: SIZE }: { stream: ReadableStream, size: number }) =>
@@ -98,7 +98,7 @@ export const removeRange =
           Math.min(sourceBuffer.buffered.end(index), end)
         )
       })
-    
+
 export const abort =
   (sourceBuffer: SourceBuffer) =>
     listenForOperationResult(sourceBuffer)(() => {
@@ -125,61 +125,80 @@ const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
 
 export const updateSourceBuffer =
   (sourceBuffer: SourceBuffer, getChunkArrayBuffer: (id: number) => Promise<Uint8Array | undefined>) => {
-    let bufferedChunks: number[] = []
+    const cache: Map<number, Uint8Array | Promise<Uint8Array | undefined>> = new Map()
+    const bufferedChunksMap: Map<number, Uint8Array> = new Map()
+    let renderCount = 0
 
     return async ({ currentTime, chunks }: { currentTime: number, chunks: Chunk[] }) => {
+      const currentRenderCount = renderCount
+      renderCount++
+
       const neededChunks =
-        chunks
-          .filter(({ startTime, endTime }) =>
-            currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < startTime
-            && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > endTime
-          )
-  
+        [
+          // header chunk
+          { keyframeIndex: 0, startTime: 0, endTime: 0 },
+          ...chunks
+            .filter(({ startTime, endTime }) =>
+              currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS < startTime
+              && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS > endTime
+            )
+        ]
+
+      // todo: improve perf by making this loop inclusive of bufferedChunksMap instead of chunks
       const shouldUnbufferChunks =
         chunks
           .filter(chunk => !neededChunks.includes(chunk))
-  
-      // console.log('bufferedRanges', getTimeRanges())
+
+      for (const chunk of shouldUnbufferChunks) {
+        if (cache.has(chunk.keyframeIndex)) cache.delete(chunk.keyframeIndex)
+      }
 
       if (sourceBuffer.updating) await abort(sourceBuffer)
       for (const chunk of shouldUnbufferChunks) {
-        if (!bufferedChunks.includes(chunk.keyframeIndex)) continue
-        // if (!chunk.buffered) continue
+        if (!bufferedChunksMap.has(chunk.keyframeIndex)) continue
         try {
           await removeChunk(sourceBuffer)(chunk)
+          bufferedChunksMap.delete(chunk.keyframeIndex)
         } catch (err) {
           if (err.message === 'No TimeRange found with this chunk') {
-            bufferedChunks = bufferedChunks.filter(index => index !== chunk.keyframeIndex)
-            // chunk.buffered = false
+            bufferedChunksMap.delete(chunk.keyframeIndex)
           }
           if (err.message !== 'No TimeRange found with this chunk') throw err
         }
       }
-      const bufferedRanges =
+      const bufferedOutOfRangeRanges =
         getTimeRanges(sourceBuffer)
           .filter(({ start, end }) =>
               currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > start && currentTime - PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS > end ||
               currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < start && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < end
             )
-      for (const range of bufferedRanges) {
+      for (const range of bufferedOutOfRangeRanges) {
         await removeRange(sourceBuffer)(range)
       }
       for (const chunk of neededChunks) {
-        if (
-          bufferedChunks.includes(chunk.keyframeIndex)
-          // chunk.buffered
-          || (
-            // processedBytes !== fileSize
-            // &&
-            chunk.keyframeIndex + 1 === chunks.length
-          )
-        ) continue
+        // console.log('chunk', chunk, neededChunks, bufferedChunksMap.has(chunk.keyframeIndex), chunk.keyframeIndex + 1 === chunks.length)
+        if (bufferedChunksMap.has(chunk.keyframeIndex) || chunk.keyframeIndex + 1 === chunks.length) continue
+        // console.log('check PASSED', chunk, neededChunks)
         try {
-          const buffer = await getChunkArrayBuffer(chunk.keyframeIndex)
+          const cachedBuffer = cache.get(chunk.keyframeIndex)
+          if (!cachedBuffer) {
+            const fetchBuffer =
+              getChunkArrayBuffer(chunk.keyframeIndex)
+                .then(arrayBuffer => {
+                  if (arrayBuffer) cache.set(chunk.keyframeIndex, arrayBuffer)
+                  return arrayBuffer
+                })
+            cache.set(chunk.keyframeIndex, fetchBuffer)
+          }
+          const buffer = await cache.get(chunk.keyframeIndex)
+          if (renderCount !== currentRenderCount + 1) return
           if (!buffer) continue
           const _chunk = { ...chunk, arrayBuffer: buffer }
-          await appendChunk(sourceBuffer)(_chunk)
-          bufferedChunks = [...bufferedChunks, chunk.keyframeIndex]
+          await appendChunk(sourceBuffer)(_chunk).catch(err => {
+            bufferedChunksMap.delete(chunk.keyframeIndex)
+            throw err
+          })
+          bufferedChunksMap.set(chunk.keyframeIndex, buffer)
         } catch (err) {
           if (!(err instanceof Event)) throw err
           // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
@@ -188,4 +207,3 @@ export const updateSourceBuffer =
       }
     }
   }
-    

@@ -9,8 +9,8 @@ import { appendBuffer, updateSourceBuffer as _updateSourceBuffer } from './utils
 import { openDB } from 'idb'
 
 
-const useThrottle = () =>
-  useCallback((func, limit) => {
+const useThrottle = (func: (...args: any[]) => any, limit: number, deps: any[] = []) =>
+  useMemo(() => {
     let inThrottle
     return (...args: any[]) => {
       if (!inThrottle) {
@@ -21,7 +21,7 @@ const useThrottle = () =>
         }, limit)
       }
     }
-  }, [])
+  }, deps)
 
 // const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
 //   const [loadedTime, setLoadedTime] = useState()
@@ -44,7 +44,6 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
   const [info, setInfo] = useState()
   const [mime, setMime] = useState<string>()
   const [mp4Info, setMp4Info] = useState()
-  const [headerChunk, setHeaderChunk] = useState<Uint8Array>()
   const [chunks, setChunks] = useState<Chunk[]>([])
   const loadedTime = useMemo(() => chunks.at(-1)?.endTime, [chunks])
   const worker = useMemo(() => new Worker('/worker.js', { type: 'module' }), [])
@@ -58,18 +57,11 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
   useEffect(() => {
     if (!id || !size || !inStream) return
     call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream, newChunk })
-      .then(({ stream: streamOut, info, mime, mp4info, headerChunks }) => {
+      .then(({ stream: streamOut, info, mime, mp4info }) => {
         console.log('info', info)
         setInfo(info)
         setMime(mp4info.mime)
         setMp4Info(mp4info)
-        const headerChunk = new Uint8Array(headerChunks.map(chunk => chunk.arrayBuffer.byteLength).reduce((acc, length) => acc + length, 0))
-        let currentSize = 0
-        for (const chunk of headerChunks) {
-          headerChunk.set(chunk.arrayBuffer, currentSize)
-          currentSize += chunk.arrayBuffer.byteLength
-        }
-        setHeaderChunk(headerChunk)
       })
   }, [id, size, inStream])
 
@@ -78,7 +70,6 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
     info,
     mime,
     mp4Info,
-    headerChunk,
     chunks
   }
 }
@@ -91,36 +82,32 @@ export const db =
     }
   })
 
-const useSourceBuffer = ({ id, info, mime, headerChunk, chunks, video, currentTime }: { id?: string, info?: any, mime?: string, headerChunk?: Uint8Array, chunks: Chunk[], video: HTMLVideoElement, currentTime: number }) => {
+const useSourceBuffer = ({ id, info, mime, chunks, video, currentTime }: { id?: string, info?: any, mime?: string, chunks: Chunk[], video: HTMLVideoElement, currentTime: number }) => {
   const [duration, setDuration] = useState<number>()
   const [mediaSource] = useState(new MediaSource())
   const [sourceUrl] = useState<string>(URL.createObjectURL(mediaSource))
   const [sourceBuffer, setSourceBuffer] = useState<SourceBuffer>()
-  const updateSourceBuffer = useMemo(() => {
-    // console.log('updateSourceBuffer memo', sourceBuffer)
+
+  const __updateSourceBuffer = useMemo(() => {
     if (!sourceBuffer) return
     return _updateSourceBuffer(sourceBuffer, async (index) => {
+      console.log(`get chunk ${id}-${index}`)
       const arrayBuffer = await (await db).get('chunks', `${id}-${index}`)
       if (!arrayBuffer) return
       return new Uint8Array(arrayBuffer)
     })
   }, [sourceBuffer])
 
+  const updateSourceBuffer = useThrottle((...args) => __updateSourceBuffer?.(...args), 250, [__updateSourceBuffer])
+
   useEffect(() => {
-    if (!id || !info || !mime || !headerChunk) return
+    if (!id || !info || !mime || sourceBuffer) return
     const registerSourceBuffer = async () => {
       mediaSource.duration = info.input.duration
       const sourceBuffer = mediaSource.addSourceBuffer(mime)
-      console.log('sourceopen', sourceBuffer, headerChunk)
       sourceBuffer.mode = 'segments'
       setSourceBuffer(sourceBuffer)
       setDuration(info.input.duration)
-      const firstChunk = await (await db).get('chunks', '1')
-      if (!firstChunk) throw new Error('FUCKKKKKKKK')
-      const headChunk = new Uint8Array(headerChunk.byteLength + (firstChunk?.byteLength ?? 0))
-      headChunk.set(headerChunk)
-      headChunk.set(new Uint8Array(firstChunk), headerChunk.byteLength)
-      await appendBuffer(sourceBuffer)(headChunk)
     }
     if(mediaSource.readyState === 'closed') {
       mediaSource.addEventListener(
@@ -131,11 +118,12 @@ const useSourceBuffer = ({ id, info, mime, headerChunk, chunks, video, currentTi
     } else {
       registerSourceBuffer()
     }
-  }, [id, info, mime, headerChunk])
+  }, [id, info, mime])
 
   useEffect(() => {
     if (!updateSourceBuffer) return
     // console.log('update source buffer', currentTime, chunks)
+    // updateSourceBuffer()
     updateSourceBuffer({ currentTime, chunks })
   }, [currentTime, updateSourceBuffer, chunks])
 
@@ -157,16 +145,31 @@ const chromeStyle = css`
   }
 
   .overlay {
-    flex: 1;
+    display: grid;
+    grid-column: 1;
+    grid-row: 1;
     display: grid;
     height: 100%;
     width: 100%;
     justify-items: center;
     align-items: center;
+
+    canvas {
+      grid-column: 1;
+      grid-row: 1;
+      height: 100%;
+      width: 100%;
+    }
+
+    .loading {
+      grid-column: 1;
+      grid-row: 1;
+    }
   }
 
   .bottom {
-    flex: 1;
+    grid-column: 1;
+    grid-row: 1;
     align-self: end;
     height: calc(4.8rem + var(--background-padding));
     width: 100%;
@@ -239,22 +242,23 @@ const chromeStyle = css`
 `
 
 const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, play, ...rest }: { isPlaying?: boolean, loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement>, play: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isFullscreen, setFullscreen] = useState(false)
-  const [hidden, setHidden] = useState(false)
-  const [autoHide, setAutoHide] = useState<number>()
+  const [hidden, setHidden] = useState(true)
+  const autoHide = useRef<number>()
   const isPictureInPictureEnabled = useMemo(() => document.pictureInPictureEnabled, [])
 
   const mouseMove: MouseEventHandler<HTMLDivElement> = (ev) => {
     setHidden(false)
-    if (autoHide) clearInterval(autoHide)
-    setAutoHide(
-      setTimeout(() => {
-        setHidden(true)
-      }, 5_000) as unknown as number
-    )
+    if (autoHide.current) clearInterval(autoHide.current)
+    const timeout = setTimeout(() => {
+      setHidden(true)
+    }, 5_000) as unknown as number
+    autoHide.current = timeout
   }
 
-  const mouseOut = () => {
+  const mouseOut: React.DOMAttributes<HTMLDivElement>['onMouseOut'] = (ev) => {
+    if (ev.currentTarget.parentElement !== ev.relatedTarget && ev.relatedTarget !== null) return
     setHidden(true)
   }
 
@@ -268,12 +272,14 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
   }
 
   return (
-    <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
+    <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`chrome ${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
       <div className="overlay" onClick={clickPlay}>
+        <canvas ref={canvasRef}/>
         {
           loading
             ? (
               <svg
+                className="loading"
                 xmlns="http://www.w3.org/2000/svg"
                 style={{
                   display: 'block',

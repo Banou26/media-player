@@ -5,7 +5,7 @@ import { makeCallListener, registerListener } from 'osra'
 import { remux } from '@banou26/oz-libav'
 
 export type Chunk = {
-  arrayBuffer: Uint8Array // ArrayBuffer
+  // arrayBuffer: Uint8Array // ArrayBuffer
   keyframeIndex: number
   startTime: number
   endTime: number
@@ -16,9 +16,8 @@ export type Video = {
   filename?: string
   date: Date
   size: number
-  headerChunks: Chunk[]
   chunks: Chunk[]
-  chunkSize: number
+  done?: boolean
 }
 
 export interface VideoDB extends DBSchema {
@@ -43,12 +42,13 @@ export const db =
     }
   })
 
-const makeMp4Extracter = async ({ id, stream, size, headerChunks, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, headerChunks: Chunk[], newChunk: (chunk: Chunk) => void }) => {
+const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, newChunk: (chunk: Chunk) => void }) => {
   const date = new Date()
   const reader = stream.getReader()
   const mp4boxfile = createFile()
-  const chunks = []
+  let chunks: Chunk[] = []
   let processedBytes = 0
+  let done = false
 
   mp4boxfile.onError = e => console.error('onError', e)
   mp4boxfile.onSamples = async (_id, user, samples) => {
@@ -62,17 +62,16 @@ const makeMp4Extracter = async ({ id, stream, size, headerChunks, newChunk }: { 
     const groupedSamples = groupBy(samples, 'moof_number')
     for (const group of groupedSamples) {
       const firstSample = group[0]
-      const lastSample = group.slice(-1)[0]
-
+      const lastSample = group.at(-1)
       if (chunks[firstSample.moof_number - 1]) continue
 
       const startTime = firstSample.cts / firstSample.timescale
       const _endTime = lastSample.cts / lastSample.timescale
 
-      chunks[firstSample.moof_number - 1] = {
+      const chunk = {
         // firstSample,
         // lastSample,
-        keyframeIndex: firstSample.moof_number - 1,
+        keyframeIndex: firstSample.moof_number,
         startTime,
         // Some files have faulty fragments that contain the same start/end timestamps
         // this allow the sourceBuffer.remove calls to not throw on incorrect ranges
@@ -81,14 +80,14 @@ const makeMp4Extracter = async ({ id, stream, size, headerChunks, newChunk }: { 
             ? _endTime + 0.02
             : _endTime
       }
-      // await (await db).put('index', { id, date, size, headerChunks, chunks, chunkSize: 0 })
-      newChunk(chunks[firstSample.moof_number - 1])
+
+      chunks[firstSample.moof_number - 1] = chunk
+      await (await db).put('index', { id, date, size, chunks, done })
+      newChunk(chunk)
       // needed for mp4box to not keep a reference to the arrayBuffers creating a memory leak
       mp4boxfile.releaseUsedSamples(1, lastSample.number)
     }
   }
-
-  
 
   const info = new Promise<{ mime: string, info: MP4Info }>(resolve => {
     mp4boxfile.onReady = (_info) => {
@@ -109,24 +108,28 @@ const makeMp4Extracter = async ({ id, stream, size, headerChunks, newChunk }: { 
 
   let first = false
   let i = 0
-  let done = false
   const read = async () => {
     // const { value: arrayBuffer } = await reader.read()
-    const { value: arrayBuffer, done } = await reader.read()
+    const { value: arrayBuffer, done: _done } = await reader.read()
     // console.log('arrayBuffer', arrayBuffer)
     // if (i > 5) done = true
-    if (done) {
+    if (_done) {
+      done = true
+      // chunks = []
+      // console.log('SLICED', chunks)
+      await (await db).put('index', { id, date, size, chunks, done: true })
       return
     }
 
-    i++
     const buffer = arrayBuffer.buffer
     // const buffer = arrayBuffer.slice(0).buffer
     // @ts-ignore
     buffer.fileStart = processedBytes
-    if (i >= headerChunks.length) {
-      // ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
-    }
+    ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
+    i++
+    // else {
+    //   ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
+    // }
     mp4boxfile.appendBuffer(buffer)
     // resultBuffer.set(arrayBuffer, processedBytes)
     processedBytes += arrayBuffer.byteLength
@@ -144,19 +147,13 @@ const makeMp4Extracter = async ({ id, stream, size, headerChunks, newChunk }: { 
 
 const resolvers = {
   'REMUX': makeCallListener(async ({ id, size, stream: inStream, newChunk }: { id: string, size: number, stream: ReadableStream<Uint8Array>, newChunk: (chunk: Chunk) => void }, extra) => {
-    const { stream, info, headerChunks } = await remux({ size, stream: inStream, autoStart: true })
-    console.log('headerChunks', headerChunks)
+    const { stream, info } = await remux({ size, stream: inStream, autoStart: true })
     // const reader = stream.getReader()
-    const { mime, info: mp4info } = await makeMp4Extracter({ id, stream, size, headerChunks, newChunk })
+    const { mime, info: mp4info } = await makeMp4Extracter({ id, stream, size, newChunk })
     return {
       mime,
       info,
-      mp4info,
-      headerChunks:
-        headerChunks.map(({ arrayBuffer, ...rest }) => ({
-          ...rest,
-          arrayBuffer: arrayBuffer.buffer
-        }))
+      mp4info
     }
   })
 }
