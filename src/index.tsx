@@ -180,22 +180,26 @@ const chromeStyle = css`
     padding-top: var(--background-padding);
     background: linear-gradient(0deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.1) calc(100% - 1rem), rgba(0,0,0,0) 100%);
 
-    .progress {
+    .progress-bar {
       position: relative;
       height: .4rem;
       background-color: hsla(0, 100%, 100%, .2);
       cursor: pointer;
       .load {
+        transform-origin: 0 0;
         background-color: hsla(0, 100%, 100%, .4);
         position: absolute;
         bottom: 0;
         height: .4rem;
+        width: 100%;
       }
       .play {
+        transform-origin: 0 0;
         background-color: hsla(0, 100%, 50%, .8);
         position: absolute;
         bottom: 0;
         height: .4rem;
+        width: 100%;
       }
       .padding {
         position: absolute;
@@ -316,14 +320,22 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
       </div>
       <div className="bottom">
         <div className="preview"></div>
-        <div className="progress">
+        <div className="progress-bar">
           <div className="padding"></div>
+          <div className="progress"></div>
           {/* bar showing the currently loaded progress */}
-          <div className="load" style={{ width: `${(1 / ((duration ?? 0) / (loadedTime ?? 0))) * 100}%` }}></div>
+          <div className="load" style={{ transform: `scaleX(${1 / ((duration ?? 0) / (loadedTime ?? 0))})` }}></div>
           {/* bar to show when hovering to potentially seek */}
           <div className="hover"></div>
           {/* bar displaying the current playback progress */}
-          <div className="play" style={{ width: `${(1 / ((duration ?? 0) / (currentTime ?? 0))) * 100}%` }}></div>
+          <div className="play" style={{
+            transform: `scaleX(${
+              typeof duration !== 'number' || typeof currentTime !== 'number'
+                ? 0
+                : 1 / ((duration ?? 0) / (currentTime ?? 0))
+            })`
+          }}>
+          </div>
           <div className="chapters"></div>
           <div className="scrubber"></div>
         </div>
