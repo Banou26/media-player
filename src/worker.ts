@@ -15,9 +15,11 @@ export type Video = {
   id: string
   filename?: string
   date: Date
-  size: number
+  size?: number
   chunks: Chunk[]
   done?: boolean
+  mime?: string
+  info?: MP4Info
 }
 
 export interface VideoDB extends DBSchema {
@@ -42,13 +44,25 @@ export const db =
     }
   })
 
+// todo: refactor this shit to not have so much side effects
 const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, newChunk: (chunk: Chunk) => void }) => {
   const date = new Date()
   const reader = stream.getReader()
   const mp4boxfile = createFile()
   let chunks: Chunk[] = []
   let processedBytes = 0
-  let done = false
+  const foundIndex = await (await db).get('index', id)
+  console.log('foundIndex', foundIndex)
+  let done = foundIndex?.done ?? false
+  let writtenChunks: Chunk[] = foundIndex?.chunks ?? []
+  let info: MP4Info | undefined = foundIndex?.info
+  let mime = foundIndex?.mime ?? 'video/mp4; codecs=\"'
+
+  if (foundIndex?.done) {
+    for (const chunk of foundIndex.chunks) {
+      newChunk(chunk)
+    }
+  }
 
   mp4boxfile.onError = e => console.error('onError', e)
   mp4boxfile.onSamples = async (_id, user, samples) => {
@@ -82,27 +96,32 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
       }
 
       chunks[firstSample.moof_number - 1] = chunk
-      await (await db).put('index', { id, date, size, chunks, done })
+      if (done) {
+        await (await db).put('index', { id, date, size: processedBytes, chunks: writtenChunks, done, mime, info })
+      } else if (chunks.length >= writtenChunks.length + 10) {
+        await (await db).put('index', { id, date, size: processedBytes, chunks: writtenChunks, done, mime, info })
+      }
       newChunk(chunk)
       // needed for mp4box to not keep a reference to the arrayBuffers creating a memory leak
       mp4boxfile.releaseUsedSamples(1, lastSample.number)
     }
   }
 
-  const info = new Promise<{ mime: string, info: MP4Info }>(resolve => {
+  const _info = new Promise<{ mime: string, info: MP4Info }>(resolve => {
+    if (foundIndex?.done && mime && info) return resolve({ mime, info })
     mp4boxfile.onReady = (_info) => {
-      let mime = 'video/mp4; codecs=\"'
-      let info
+      // let mime = 'video/mp4; codecs=\"'
+      // let info
       console.log('mp4box ready info', _info)
       info = _info
-      for (let i = 0; i < info.tracks.length; i++) {
+      for (let i = 0; i < _info.tracks.length; i++) {
         if (i !== 0) mime += ','
-        mime += info.tracks[i].codec
+        mime += _info.tracks[i].codec
       }
       mime += '\"'
       mp4boxfile.setExtractionOptions(1, undefined, { nbSamples: 1000 })
       mp4boxfile.start()
-      resolve({ mime, info })
+      resolve({ mime, info: _info })
     }
   })
 
@@ -115,9 +134,10 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     // if (i > 5) done = true
     if (_done) {
       done = true
+      await (await db).put('index', { id, date, size: processedBytes, chunks: writtenChunks, done, mime, info })
       // chunks = []
       // console.log('SLICED', chunks)
-      await (await db).put('index', { id, date, size, chunks, done: true })
+      // await (await db).put('index', { id, date, size: processedBytes, chunks, done: true })
       return
     }
 
@@ -125,14 +145,29 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     // const buffer = arrayBuffer.slice(0).buffer
     // @ts-ignore
     buffer.fileStart = processedBytes
-    ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
+
+    processedBytes += arrayBuffer.byteLength
+    mp4boxfile.appendBuffer(buffer)
+
+    // ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
+    const currentChunk = chunks[i - 1]
+    if (i && !currentChunk) throw new Error(`NO CURRENT CHUNK FOUND FOR ${i - 1}`)
+    console.log('currentChunk', i, currentChunk)
+    if (!i || !writtenChunks.some(({ keyframeIndex }) => keyframeIndex === currentChunk?.keyframeIndex)) {
+      ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
+    }
+    if (i && currentChunk) {
+      writtenChunks = [...writtenChunks, currentChunk]
+    }
     i++
     // else {
     //   ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
     // }
-    mp4boxfile.appendBuffer(buffer)
+
+    // processedBytes += arrayBuffer.byteLength
+    // mp4boxfile.appendBuffer(buffer)
+
     // resultBuffer.set(arrayBuffer, processedBytes)
-    processedBytes += arrayBuffer.byteLength
     if (!first) {
       first = true
       return read()
@@ -140,9 +175,11 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     read()
   }
 
-  await read()
+  if (!foundIndex?.done) {
+    await read()
+  }
 
-  return info
+  return _info
 }
 
 const resolvers = {

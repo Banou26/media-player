@@ -91,7 +91,7 @@ const useSourceBuffer = ({ id, info, mime, chunks, video, currentTime }: { id?: 
   const __updateSourceBuffer = useMemo(() => {
     if (!sourceBuffer) return
     return _updateSourceBuffer(sourceBuffer, async (index) => {
-      console.log(`get chunk ${id}-${index}`)
+      // console.log(`get chunk ${id}-${index}`)
       const arrayBuffer = await (await db).get('chunks', `${id}-${index}`)
       if (!arrayBuffer) return
       return new Uint8Array(arrayBuffer)
