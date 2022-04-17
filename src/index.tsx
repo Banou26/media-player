@@ -12,15 +12,22 @@ import { openDB } from 'idb'
 const useThrottle = (func: (...args: any[]) => any, limit: number, deps: any[] = []) =>
   useMemo(() => {
     let inThrottle
-    return (...args: any[]) => {
+    let lastCallArgs
+    const call = (...args: any[]) => {
+      lastCallArgs = args
       if (!inThrottle) {
         func(...args)
         inThrottle = true
         setTimeout(() => {
           inThrottle = false
+          if (lastCallArgs) {
+            call(...lastCallArgs)
+            lastCallArgs = undefined
+          }
         }, limit)
       }
     }
+    return call
   }, deps)
 
 // const makeTransmuxer = async ({ id, size, stream: inStream }: { id, size: number, stream: ReadableStream }) => {
@@ -121,8 +128,6 @@ const useSourceBuffer = ({ id, info, mime, chunks, video, currentTime }: { id?: 
 
   useEffect(() => {
     if (!updateSourceBuffer) return
-    // console.log('update source buffer', currentTime, chunks)
-    // updateSourceBuffer()
     updateSourceBuffer({ currentTime, chunks })
   }, [currentTime, updateSourceBuffer, chunks])
 
@@ -185,6 +190,8 @@ const chromeStyle = css`
       height: .4rem;
       background-color: hsla(0, 100%, 100%, .2);
       cursor: pointer;
+      user-select: none;
+
       .load {
         transform-origin: 0 0;
         background-color: hsla(0, 100%, 100%, .4);
@@ -203,7 +210,7 @@ const chromeStyle = css`
       }
       .padding {
         position: absolute;
-        bottom: 0;
+        bottom: -4px;
         height: 1.6rem;
         width: 100%;
       }
@@ -216,6 +223,7 @@ const chromeStyle = css`
       grid-template-columns: 5rem 20rem auto 5rem 5rem;
       grid-gap: 1rem;
       color: #fff;
+      user-select: none;
 
       .picture-in-picture {
         display: grid;
@@ -244,12 +252,14 @@ const chromeStyle = css`
   }
 `
 
-const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, play, ...rest }: { isPlaying?: boolean, loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement>, play: MouseEventHandler<HTMLDivElement> } & HTMLAttributes<HTMLDivElement>) => {
+const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, play, seek, ...rest }: { isPlaying?: boolean, loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement>, play: MouseEventHandler<HTMLDivElement>, seek: (time: number) => void } & HTMLAttributes<HTMLDivElement>) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const progressBarRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setFullscreen] = useState(false)
   const [hidden, setHidden] = useState(true)
   const autoHide = useRef<number>()
   const isPictureInPictureEnabled = useMemo(() => document.pictureInPictureEnabled, [])
+  const [scrubbing, setScrubbing] = useState(false)
 
   const mouseMove: MouseEventHandler<HTMLDivElement> = (ev) => {
     setHidden(false)
@@ -274,7 +284,36 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
     fullscreen(ev)
   }
 
-  return (
+  const scrub = (ev) => {
+    setScrubbing(true)
+    if (!progressBarRef.current || !duration) return
+    const { clientX: x } = ev
+    const { left, right } = progressBarRef.current.getBoundingClientRect()
+    const time = Math.min(((x - left) / (right - left)) * duration, duration)
+    seek(time)
+  }
+
+  useEffect(() => {
+    if (!scrubbing) return
+    const mouseUp = (ev: MouseEvent) => {
+      setScrubbing(false)
+    }
+    const mouseMove = (ev: MouseEvent) => {
+      if (!progressBarRef.current || !duration) return
+      const { clientX: x } = ev
+      const { left, right } = progressBarRef.current.getBoundingClientRect()
+      const time = Math.min(((x - left) / (right - left)) * duration, duration)
+      seek(time)
+    }
+    document.addEventListener('mousemove', mouseMove)
+    document.addEventListener('mouseup', mouseUp)
+    return () => {
+      document.removeEventListener('mousemove', mouseMove)
+      document.removeEventListener('mouseup', mouseUp)
+    }
+  }, [scrubbing])
+
+   return (
     <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`chrome ${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
       <div className="overlay" onClick={clickPlay}>
         <canvas ref={canvasRef}/>
@@ -320,8 +359,7 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
       </div>
       <div className="bottom">
         <div className="preview"></div>
-        <div className="progress-bar">
-          <div className="padding"></div>
+        <div className="progress-bar" ref={progressBarRef}>
           <div className="progress"></div>
           {/* bar showing the currently loaded progress */}
           <div className="load" style={{ transform: `scaleX(${1 / ((duration ?? 0) / (loadedTime ?? 0))})` }}></div>
@@ -338,6 +376,7 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
           </div>
           <div className="chapters"></div>
           <div className="scrubber"></div>
+          <div className="padding" onMouseDown={scrub}></div>
         </div>
         <div className="controls">
           <button className="play-button" type="button" onClick={clickPlay}>
@@ -413,6 +452,12 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
 
   }
 
+  const seek = (time: number) => {
+    if (!videoRef.current) return
+    videoRef.current.currentTime = time
+    setCurrentTime(videoRef.current?.currentTime ?? 0)
+  }
+
   const timeUpdate: React.DOMAttributes<HTMLVideoElement>['onTimeUpdate'] = (ev) => {
     setCurrentTime(videoRef.current?.currentTime ?? 0)
     setLoading(false)
@@ -467,6 +512,7 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
         pictureInPicture={pictureInPicture}
         fullscreen={fullscreen}
         play={play}
+        seek={seek}
       />
     </div>
   )
