@@ -58,7 +58,6 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
     if (!id || !size || !inStream) return
     call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream, newChunk })
       .then(({ stream: streamOut, info, mime, mp4info }) => {
-        console.log('info', info)
         setInfo(info)
         setMime(mp4info.mime)
         setMp4Info(mp4info)

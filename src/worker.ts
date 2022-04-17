@@ -52,7 +52,6 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
   let chunks: Chunk[] = []
   let processedBytes = 0
   const foundIndex = await (await db).get('index', id)
-  console.log('foundIndex', foundIndex)
   let done = foundIndex?.done ?? false
   let writtenChunks: Chunk[] = foundIndex?.chunks ?? []
   let info: MP4Info | undefined = foundIndex?.info
@@ -112,7 +111,7 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     mp4boxfile.onReady = (_info) => {
       // let mime = 'video/mp4; codecs=\"'
       // let info
-      console.log('mp4box ready info', _info)
+      // console.log('mp4box ready info', _info)
       info = _info
       for (let i = 0; i < _info.tracks.length; i++) {
         if (i !== 0) mime += ','
@@ -152,7 +151,6 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     // ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
     const currentChunk = chunks[i - 1]
     if (i && !currentChunk) throw new Error(`NO CURRENT CHUNK FOUND FOR ${i - 1}`)
-    console.log('currentChunk', i, currentChunk)
     if (!i || !writtenChunks.some(({ keyframeIndex }) => keyframeIndex === currentChunk?.keyframeIndex)) {
       ;(await db).put('chunks', arrayBuffer, `${id}-${i}`)
     }
@@ -175,7 +173,14 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     read()
   }
 
-  if (!foundIndex?.done) {
+
+  if (foundIndex?.done) {
+    const drainStream = async () => {
+      const { done } = await reader.read()
+      if (!done) drainStream()
+    }
+    drainStream()
+  } else {
     await read()
   }
 
