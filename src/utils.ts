@@ -189,7 +189,7 @@ export const updateSourceBuffer =
       }
       for (const chunk of neededChunks) {
         // console.log('chunk', chunk, neededChunks, bufferedChunksMap.has(chunk.keyframeIndex), chunk.keyframeIndex + 1 === chunks.length)
-        if (bufferedChunksMap.has(chunk.keyframeIndex) || chunk.keyframeIndex + 1 === chunks.length) continue
+        if (bufferedChunksMap.has(chunk.keyframeIndex) || (chunk.keyframeIndex !== 0 && chunk.keyframeIndex + 1 === chunks.length)) continue
         // console.log('check PASSED', chunk, neededChunks)
         try {
           const cachedBuffer = cache.get(chunk.keyframeIndex)
