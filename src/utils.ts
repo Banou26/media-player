@@ -59,6 +59,7 @@ const listenForOperationResult =
   (sourceBuffer: SourceBuffer) =>
     (func: () => void) =>
       new Promise((resolve, reject) => {
+        // if (sourceBuffer.updating) return resolve(undefined)
         const updateEnd = ev => {
           unregisterListeners()
           resolve(ev)
@@ -72,10 +73,12 @@ const listenForOperationResult =
           reject(ev)
         }
         const unregisterListeners = () => {
+          // sourceBuffer.removeEventListener('update', updateEnd)
           sourceBuffer.removeEventListener('updateend', updateEnd)
           sourceBuffer.removeEventListener('abort', abort)
           sourceBuffer.removeEventListener('error', error)
         }
+        // sourceBuffer.addEventListener('update', updateEnd)
         sourceBuffer.addEventListener('updateend', updateEnd)
         sourceBuffer.addEventListener('abort', abort)
         sourceBuffer.addEventListener('error', error)
@@ -130,7 +133,7 @@ export const updateSourceBuffer =
     const bufferedChunksMap: Map<number, Uint8Array> = new Map()
     let renderCount = 0
 
-    const update = async ({ currentTime, chunks }: { currentTime: number, chunks: Chunk[] }) => {
+    const update = async ({ currentTime, chunks, retry = false }: { currentTime: number, chunks: Chunk[], retry: boolean }) => {
       const currentRenderCount = renderCount
       renderCount++
 
@@ -168,7 +171,7 @@ export const updateSourceBuffer =
           if (err.message === 'No TimeRange found with this chunk') {
             bufferedChunksMap.delete(chunk.keyframeIndex)
           }
-          // if (err.message !== 'No TimeRange found with this chunk') throw err
+          if (err.message !== 'No TimeRange found with this chunk') throw err
         }
       }
       const bufferedOutOfRangeRanges =
@@ -180,7 +183,9 @@ export const updateSourceBuffer =
       for (const range of bufferedOutOfRangeRanges) {
         try {
           await removeRange(sourceBuffer)(range)
-        } catch (err) {}
+        } catch (err) {
+          throw err
+        }
       }
       for (const chunk of neededChunks) {
         // console.log('chunk', chunk, neededChunks, bufferedChunksMap.has(chunk.keyframeIndex), chunk.keyframeIndex + 1 === chunks.length)
@@ -212,8 +217,8 @@ export const updateSourceBuffer =
               await removeRange(sourceBuffer)(range)
               // todo: remove cached buffers from Maps
             }
-            await update({ currentTime, chunks })
-            // throw err
+            if (!retry) await update({ currentTime, chunks, retry: true })
+            else throw err
           }
           // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
           break
