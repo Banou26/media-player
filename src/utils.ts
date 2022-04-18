@@ -123,13 +123,14 @@ export const removeChunk =
 const PRE_SEEK_NEEDED_BUFFERS_IN_SECONDS = 15
 const POST_SEEK_NEEDED_BUFFERS_IN_SECONDS = 30
 
+// todo: fix issue with last chunk not properly loaded
 export const updateSourceBuffer =
   (sourceBuffer: SourceBuffer, getChunkArrayBuffer: (id: number) => Promise<Uint8Array | undefined>) => {
     const cache: Map<number, Uint8Array | Promise<Uint8Array | undefined>> = new Map()
     const bufferedChunksMap: Map<number, Uint8Array> = new Map()
     let renderCount = 0
 
-    return async ({ currentTime, chunks }: { currentTime: number, chunks: Chunk[] }) => {
+    const update = async ({ currentTime, chunks }: { currentTime: number, chunks: Chunk[] }) => {
       const currentRenderCount = renderCount
       renderCount++
 
@@ -153,7 +154,11 @@ export const updateSourceBuffer =
         if (cache.has(chunk.keyframeIndex)) cache.delete(chunk.keyframeIndex)
       }
 
-      if (sourceBuffer.updating) await abort(sourceBuffer)
+      if (sourceBuffer.updating) {
+        await abort(sourceBuffer).catch((err) => {
+          if (!(err instanceof Event)) throw err
+        })
+      }
       for (const chunk of shouldUnbufferChunks) {
         if (!bufferedChunksMap.has(chunk.keyframeIndex)) continue
         try {
@@ -163,7 +168,7 @@ export const updateSourceBuffer =
           if (err.message === 'No TimeRange found with this chunk') {
             bufferedChunksMap.delete(chunk.keyframeIndex)
           }
-          if (err.message !== 'No TimeRange found with this chunk') throw err
+          // if (err.message !== 'No TimeRange found with this chunk') throw err
         }
       }
       const bufferedOutOfRangeRanges =
@@ -173,7 +178,9 @@ export const updateSourceBuffer =
               currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < start && currentTime + POST_SEEK_NEEDED_BUFFERS_IN_SECONDS < end
             )
       for (const range of bufferedOutOfRangeRanges) {
-        await removeRange(sourceBuffer)(range)
+        try {
+          await removeRange(sourceBuffer)(range)
+        } catch (err) {}
       }
       for (const chunk of neededChunks) {
         // console.log('chunk', chunk, neededChunks, bufferedChunksMap.has(chunk.keyframeIndex), chunk.keyframeIndex + 1 === chunks.length)
@@ -200,10 +207,19 @@ export const updateSourceBuffer =
           })
           bufferedChunksMap.set(chunk.keyframeIndex, buffer)
         } catch (err) {
-          if (!(err instanceof Event)) throw err
+          if (!(err instanceof Event)) {
+            for (const range of getTimeRanges(sourceBuffer)) {
+              await removeRange(sourceBuffer)(range)
+              // todo: remove cached buffers from Maps
+            }
+            await update({ currentTime, chunks })
+            // throw err
+          }
           // if (err.message !== 'Failed to execute \'appendBuffer\' on \'SourceBuffer\': This SourceBuffer is still processing an \'appendBuffer\' or \'remove\' operation.') throw err
           break
         }
       }
     }
+    
+    return update
   }
