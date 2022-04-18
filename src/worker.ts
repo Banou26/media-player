@@ -66,17 +66,19 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
   mp4boxfile.onError = e => console.error('onError', e)
   mp4boxfile.onSamples = async (_id, user, samples) => {
     // console.log('onSamples', id, user, samples)
-    const groupBy = (xs, key) => {
-      return xs.reduce((rv, x) => {
-        (rv[x[key]] = rv[x[key]] || []).push(x)
-        return rv
-      }, []).filter(Boolean)
-    }
-    const groupedSamples = groupBy(samples, 'moof_number')
-    for (const group of groupedSamples) {
-      const firstSample = group[0]
-      const lastSample = group.at(-1)
-      if (chunks[firstSample.moof_number - 1]) continue
+    // const groupBy = (xs, key) => {
+    //   return xs.reduce((rv, x) => {
+    //     (rv[x[key]] = rv[x[key]] || []).push(x)
+    //     return rv
+    //   }, []).filter(Boolean)
+    // }
+    // const groupedSamples = groupBy(samples, 'moof_number')
+    // for (const group of groupedSamples) {
+      // const firstSample = group[0]
+      // const lastSample = group.at(-1)
+      const firstSample = samples[0]
+      const lastSample = samples.at(-1)
+      if (chunks[firstSample.moof_number - 1]) return
 
       const startTime = firstSample.cts / firstSample.timescale
       const _endTime = lastSample.cts / lastSample.timescale
@@ -102,8 +104,8 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
       }
       newChunk(chunk)
       // needed for mp4box to not keep a reference to the arrayBuffers creating a memory leak
-      mp4boxfile.releaseUsedSamples(1, lastSample.number)
-    }
+      mp4boxfile.releaseUsedSamples(_id, lastSample.number + 1)
+    // }
   }
 
   const _info = new Promise<{ mime: string, info: MP4Info }>(resolve => {
