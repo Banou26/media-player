@@ -48,7 +48,7 @@ export const db =
 const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, newChunk: (chunk: Chunk) => void }) => {
   const date = new Date()
   const reader = stream.getReader()
-  const mp4boxfile = createFile()
+  const mp4boxfile = createFile(false)
   let chunks: Chunk[] = []
   let processedBytes = 0
   const foundIndex = await (await db).get('index', id)
