@@ -61,7 +61,8 @@ esbuild.build({
 esbuild.build({
   ...config,
   entryPoints: ['./src/worker.ts'],
-  outfile: './build/worker.js'
+  outfile: './build/worker.js',
+  inject: ['./src/worker-shim.ts']
 }).catch(err => console.error(err))
 
 if (process.argv.includes('-s') || process.argv.includes('--serve')) {

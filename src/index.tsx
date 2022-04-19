@@ -1,8 +1,9 @@
 /// <reference types="@emotion/react/types/css-prop" />
-import type { Chunk, Resolvers as WorkerResolvers, VideoDB } from './worker'
+import type { Attachment, Chunk, Resolvers as WorkerResolvers, Subtitle, VideoDB } from './worker'
 
 import { ClassAttributes, forwardRef, HTMLAttributes, MouseEventHandler, ReactEventHandler, SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState, VideoHTMLAttributes } from 'react'
 import { createRoot } from 'react-dom/client'
+import SubtitlesOctopus from 'libass-wasm'
 import { call } from 'osra'
 import { css, Global } from '@emotion/react'
 import { appendBuffer, updateSourceBuffer as _updateSourceBuffer } from './utils'
@@ -52,6 +53,8 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
   const [mime, setMime] = useState<string>()
   const [mp4Info, setMp4Info] = useState()
   const [chunks, setChunks] = useState<Chunk[]>([])
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [tracks, setTracks] = useState<Subtitle[]>([])
   const loadedTime = useMemo(() => chunks.at(-1)?.endTime, [chunks])
   const worker = useMemo(() => new Worker('/worker.js', { type: 'module' }), [])
 
@@ -61,9 +64,28 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
     // setLoadedTime(chunk.endTime)
   }
 
+  const newSubtitles = (data: { attachments: Attachment[], tracks: Subtitle[] } | { subtitles: { content: string, stream: number }[] }) => {
+    if ('tracks' in data) {
+      setTracks(data.tracks)
+      setAttachments(data.attachments)
+      return
+    }
+    setTracks(tracks => {
+      let newTracks
+      for (const subtitle of data.subtitles) {
+        newTracks = tracks.map((track) =>
+          track.number === subtitle.stream
+            ? { ...track, content: track.content += `\n${subtitle.content}` }
+            : track
+        )
+      }
+      return newTracks
+    })
+  }
+
   useEffect(() => {
     if (!id || !size || !inStream) return
-    call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream, newChunk })
+    call<WorkerResolvers>(worker)('REMUX', { id, size, stream: inStream, newChunk, newSubtitles })
       .then(({ stream: streamOut, info, mime, mp4info }) => {
         setInfo(info)
         setMime(mp4info.mime)
@@ -76,7 +98,9 @@ const useTransmuxer = ({ id, size, stream: inStream }: { id?: string, size?: num
     info,
     mime,
     mp4Info,
-    chunks
+    chunks,
+    attachments,
+    tracks
   }
 }
 
@@ -85,6 +109,8 @@ export const db =
     upgrade(db) {
       db.createObjectStore('index', { keyPath: 'id' })
       db.createObjectStore('chunks')
+      db.createObjectStore('attachments')
+      db.createObjectStore('subtitles')
     }
   })
 
@@ -149,6 +175,7 @@ const chromeStyle = css`
   }
 
   .overlay {
+    position: relative;
     display: grid;
     grid-column: 1;
     grid-row: 1;
@@ -159,6 +186,9 @@ const chromeStyle = css`
     align-items: center;
 
     canvas {
+      pointer-events: none;
+      position: absolute;
+      inset: 0;
       grid-column: 1;
       grid-row: 1;
       height: 100%;
@@ -172,6 +202,7 @@ const chromeStyle = css`
   }
 
   .bottom {
+    position: relative;
     grid-column: 1;
     grid-row: 1;
     align-self: end;
@@ -252,15 +283,20 @@ const chromeStyle = css`
   }
 `
 
-const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, play, seek, ...rest }: { isPlaying?: boolean, loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement>, play: MouseEventHandler<HTMLDivElement>, seek: (time: number) => void } & HTMLAttributes<HTMLDivElement>) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictureInPicture, fullscreen, play, seek, attachments, tracks, video, ...rest }: { isPlaying?: boolean, loading?: boolean, duration?: number, loadedTime?: number, currentTime?: number, pictureInPicture: MouseEventHandler<HTMLDivElement>, fullscreen: MouseEventHandler<HTMLDivElement>, play: MouseEventHandler<HTMLDivElement>, seek: (time: number) => void, attachments: Attachment[], tracks: Subtitle[] } & HTMLAttributes<HTMLDivElement>) => {
+  const [canvasElement, setCanvasElement] = useState<HTMLCanvasElement | undefined>()
   const progressBarRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setFullscreen] = useState(false)
   const [hidden, setHidden] = useState(true)
   const autoHide = useRef<number>()
   const isPictureInPictureEnabled = useMemo(() => document.pictureInPictureEnabled, [])
   const [scrubbing, setScrubbing] = useState(false)
-
+  const [subtitlesOctopusInstance, setSubtitlesOctopusInstance] = useState()
+  const [currentSubtitleTrack, setCurrentSubtitleTrack] = useState<number | undefined>()
+  const subtitleTrack = useMemo(
+    () => currentSubtitleTrack ? tracks.find(({ number }) => number === currentSubtitleTrack) : undefined,
+    [currentSubtitleTrack, currentSubtitleTrack && tracks.find(({ number }) => number === currentSubtitleTrack)?.content]
+  )
   const mouseMove: MouseEventHandler<HTMLDivElement> = (ev) => {
     setHidden(false)
     if (autoHide.current) clearInterval(autoHide.current)
@@ -282,6 +318,9 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
   const clickFullscreen = (ev) => {
     setFullscreen(value => !value)
     fullscreen(ev)
+    canvasElement.height = window.screen.height * window.devicePixelRatio
+    canvasElement.width = window.screen.width * window.devicePixelRatio
+    subtitlesOctopusInstance.resize((window.screen.width * window.devicePixelRatio) * 2, (window.screen.height * window.devicePixelRatio) * 2)
   }
 
   const scrub = (ev) => {
@@ -313,10 +352,67 @@ const Chrome = (({ isPlaying, loading, duration, loadedTime, currentTime, pictur
     }
   }, [scrubbing])
 
+  useEffect(() => {
+    if (!video.current || !canvasElement || !attachments.length || subtitlesOctopusInstance || !subtitleTrack?.content) return
+    const fonts = attachments.map(({ filename, data }) => [filename, URL.createObjectURL(new Blob([data], {type : 'application/javascript'} ))])
+    const _subtitlesOctopusInstance = new SubtitlesOctopus({
+      // video: video.current,
+      canvas: canvasElement,
+      // video: document.body.appendChild(document.createElement('video')),
+      subContent: `${subtitleTrack.header}\n${subtitleTrack.content}`,
+      fonts: fonts.map(([,filename]) => filename),
+      availableFonts:  Object.fromEntries(fonts),
+      workerUrl: '/subtitles-octopus-worker.js', // Link to WebAssembly-based file "libassjs-worker.js"
+    })
+    setSubtitlesOctopusInstance(_subtitlesOctopusInstance)
+  }, [canvasElement, attachments, subtitleTrack?.content])
+
+  useEffect(() => {
+    if (!tracks.length) return
+    setCurrentSubtitleTrack(tracks.sort(({ number }) => number)[0]?.number)
+  }, [tracks.length])
+
+  useEffect(() => {
+    if (!subtitleTrack || !subtitlesOctopusInstance) return
+    // console.log('setTrack', `${subtitleTrack.header}${subtitleTrack.content}`)
+    subtitlesOctopusInstance.setTrack(`${subtitleTrack.header}\n${subtitleTrack.content}`)
+  }, [subtitlesOctopusInstance, subtitleTrack])
+
+  useEffect(() => {
+    if (!subtitlesOctopusInstance) return
+    subtitlesOctopusInstance.setCurrentTime(currentTime)
+  }, [currentTime])
+
+  useEffect(() => {
+    if (!canvasElement || isFullscreen) return
+    // const listener = () => {
+    //   canvasElement.height = canvasElement.getBoundingClientRect().height
+    //   canvasElement.width = canvasElement.getBoundingClientRect().width
+    // }
+    // document.addEventListener('resize', listener)
+    const observer = new ResizeObserver(() => {
+      const parent = canvasElement.parentElement
+      if (!parent || !subtitlesOctopusInstance || isFullscreen) return
+      canvasElement.height = parent.getBoundingClientRect().height
+      canvasElement.width = parent.getBoundingClientRect().width
+      subtitlesOctopusInstance.resize(parent.getBoundingClientRect().width, parent.getBoundingClientRect().height)
+    })
+    observer.observe(canvasElement)
+    return () => {
+      observer.disconnect()
+      // document.removeEventListener('resize', listener)
+    }
+  }, [canvasElement, subtitlesOctopusInstance, isFullscreen])
+
+  const setCanvasRef: ClassAttributes<HTMLCanvasElement>['ref'] = (canvasElem) => {
+    if (!canvasElem) return
+    setCanvasElement(canvasElem)
+  }
+
    return (
     <div {...rest} css={chromeStyle} onMouseMove={mouseMove} onMouseOut={mouseOut} className={`chrome ${rest.className ?? ''} ${hidden ? 'hide' : ''}`}>
       <div className="overlay" onClick={clickPlay}>
-        <canvas ref={canvasRef}/>
+        <canvas ref={setCanvasRef}/>
         {
           loading
             ? (
@@ -436,7 +532,7 @@ const style = css`
 `
 
 const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputElement> & { id?: string, size?: number, stream?: ReadableStream<Uint8Array> }>(({ id, size, stream: inStream }, ref) => {
-  const { loadedTime, mime, info, headerChunk, chunks } = useTransmuxer({ id, size, stream: inStream })
+  const { loadedTime, mime, info, headerChunk, chunks, attachments, tracks } = useTransmuxer({ id, size, stream: inStream })
   const [loading, setLoading] = useState(true)
   const containerRef = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>()
@@ -513,6 +609,8 @@ const FKNVideo = forwardRef<HTMLVideoElement, VideoHTMLAttributes<HTMLInputEleme
         fullscreen={fullscreen}
         play={play}
         seek={seek}
+        attachments={attachments}
+        tracks={tracks}
       />
     </div>
   )
@@ -570,7 +668,7 @@ const Mount = () => {
   const [stream, setStream] = useState<ReadableStream<Uint8Array>>()
 
   useEffect(() => {
-    fetch('./video.mkv')
+    fetch('./video2.mkv')
       .then(({ headers, body }) => {
         if (!body || !headers.get('Content-Length')) throw new Error('no stream or Content-Length returned from the response')
         setSize(Number(headers.get('Content-Length')))

@@ -1,6 +1,7 @@
 import type { MP4Info } from './mp4box'
 import { createFile } from 'mp4box'
 import { openDB, DBSchema } from 'idb'
+import { SubtitleParser } from 'matroska-subtitles'
 import { makeCallListener, registerListener } from 'osra'
 import { remux } from '@banou26/oz-libav'
 
@@ -22,6 +23,24 @@ export type Video = {
   info?: MP4Info
 }
 
+export type Attachment = {
+  filename: string
+  mimetype: string
+  data: Uint8Array
+}
+
+export type Subtitle = {
+  header: string
+  /** language code */
+  language: string
+  /** language name / language title */
+  name: string
+  /** stream number */
+  number: number
+  type: 'ass'
+  content: string
+}
+
 export interface VideoDB extends DBSchema {
   index: {
     key: IDBValidKey
@@ -33,6 +52,14 @@ export interface VideoDB extends DBSchema {
   chunks: {
     key: IDBValidKey
     value: ArrayBuffer
+  },
+  attachments: {
+    key: IDBValidKey
+    value: Attachment[]
+  },
+  subtitles: {
+    key: IDBValidKey
+    value: Subtitle[]
   }
 }
 
@@ -41,11 +68,34 @@ export const db =
     upgrade(db) {
       db.createObjectStore('index', { keyPath: 'id' })
       db.createObjectStore('chunks')
+      db.createObjectStore('attachments')
+      db.createObjectStore('subtitles')
     }
   })
 
+const throttle = (func: (...args: any[]) => any, limit: number) => {
+  let inThrottle
+  let lastCallArgs
+  const call = (...args: any[]) => {
+    lastCallArgs = args
+    if (!inThrottle) {
+      func(...args)
+      inThrottle = true
+      setTimeout(() => {
+        inThrottle = false
+        if (lastCallArgs) {
+          call(...lastCallArgs)
+          lastCallArgs = undefined
+        }
+      }, limit)
+    }
+  }
+  return call
+}
+
+// todo: look into using dexie / the same way dixie does bulkPut https://stackoverflow.com/a/44587191 / https://dexie.org/docs/Table/Table.bulkPut()
 // todo: refactor this shit to not have so much side effects
-const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, newChunk: (chunk: Chunk) => void }) => {
+const makeMp4Extractor = async ({ id, stream, size, newChunk }: { id: string, stream: ReadableStream<Uint8Array>, size: number, newChunk: (chunk: Chunk) => void }) => {
   const date = new Date()
   const reader = stream.getReader()
   const mp4boxfile = createFile(false)
@@ -99,7 +149,7 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
       chunks[firstSample.moof_number - 1] = chunk
       if (done) {
         await (await db).put('index', { id, date, size: processedBytes, chunks: writtenChunks, done, mime, info })
-      } else if (chunks.length >= writtenChunks.length + 10) {
+      } else if (!(writtenChunks.length % 10)) {
         await (await db).put('index', { id, date, size: processedBytes, chunks: writtenChunks, done, mime, info })
       }
       newChunk(chunk)
@@ -180,6 +230,7 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
     const drainStream = async () => {
       const { done } = await reader.read()
       if (!done) drainStream()
+      // console.log('draining')
     }
     drainStream()
   } else {
@@ -189,11 +240,140 @@ const makeMp4Extracter = async ({ id, stream, size, newChunk }: { id: string, st
   return _info
 }
 
+const makeSubtitleExtractor = ({
+  id,
+  stream,
+  newSubtitles
+}: {
+  id: string
+  stream: ReadableStream<Uint8Array>
+  newSubtitles: (data: { attachments: Attachment[], tracks: Subtitle[] } | { subtitles: { content: string, stream: number }[] }) => void
+}) => {
+  const parser = new SubtitleParser()
+  // console.log('parser', parser)
+
+  let header
+  let tracks: Subtitle[] = []
+  const events: string[] = []
+  let init = false
+
+  let attachments: { filename: string, mimetype: string, data: Uint8Array }[] = []
+
+  // first an array of subtitle track information is emitted
+  parser.once('tracks', (_tracks, chunk) => {
+    tracks = _tracks
+  })
+  
+  parser.on('file', async file => {
+    if (file.mimetype !== 'application/x-truetype-font') return
+    attachments = [...attachments, file]
+    // console.log('file:', file)
+    // await (await db).put('attachments', { id, date, size: processedBytes, chunks: writtenChunks, done, mime, info })
+  })
+
+  const toHHMMSSMS = (time: number) => {
+    const ms = time % 1000 / 10
+    const ss = time / 1000 % 60
+    const mm = time / 1000 / 60 % 60
+    const hh = time / 1000 / 60 / 60 % 24
+    return `${Math.floor(hh).toString().padStart(1, '0')}:${Math.floor(mm).toString().padStart(2, '0')}:${Math.floor(ss).toString().padStart(2, '0')}.${Math.floor(ms).toString().padStart(2, '0')}`
+  }
+
+  const generateSubtitles = () =>
+    `${header}\n${events.join('\n')}`
+
+  let queuedSubtitles: { stream: number, content: string }[] = []
+
+  const sendNewSubtitles = throttle(() => {
+    newSubtitles({
+      subtitles: queuedSubtitles
+    })
+    queuedSubtitles = []
+  }, 250)
+
+  // afterwards each subtitle is emitted
+  parser.on('subtitle', async (subtitle, trackNumber, chunk) => {
+    const currentTrack = tracks.find(({ number }) => number === trackNumber)
+    // console.log('tracks', tracks)
+    if (!currentTrack) throw new Error(`No current track found for subtitle extraction (trackNumber: ${trackNumber})`)
+
+    const start = toHHMMSSMS(subtitle.time)
+    const end = toHHMMSSMS(subtitle.time + subtitle.duration)
+    const sourceProperties = ['layer', 'style', 'name', 'marginL', 'marginR', 'marginV', 'effect', 'text']
+    // Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+    const source =
+      [
+        subtitle.layer,
+        start,
+        end,
+        ...sourceProperties.slice(1).map((key) => subtitle[key])
+      ].join(',')
+
+    const line = `Dialogue: ${source}`
+
+
+    currentTrack.content = `${currentTrack.content ?? ''}\n${line}`
+    
+    if (!init) {
+      newSubtitles({
+        attachments,
+        tracks
+      })
+      await (await db).put('attachments', attachments, id)
+      await (await db).put('subtitles', tracks, id)
+      init = true
+    } else {
+      queuedSubtitles = [...queuedSubtitles, { stream: trackNumber, content: line }]
+      sendNewSubtitles()
+    }
+    events.push(line)
+    // console.log(line, subtitle, trackNumber, chunk)
+    // console.log('Track ' + trackNumber + ':', subtitle, chunk)
+    // console.log('Track source: ', source)
+
+    // console.log('header + events', header, events)
+    // if (subtitlesOctopusInstance) {
+    //   // subtitlesOctopusInstance.freeTrack()
+    //   subtitlesOctopusInstance.setTrack(generateSubtitles())
+    // }
+  })
+
+  return new ReadableStream({
+    start() {
+      this.reader = stream.getReader()
+    },
+    async pull(controller) {
+      const { value, done } = await this.reader.read()
+      if (value) {
+        controller.enqueue(value)
+        parser.write(value)
+      }
+      if (done) {
+        controller.close()
+        parser.end()
+      }
+    }
+  })
+}
+
 const resolvers = {
-  'REMUX': makeCallListener(async ({ id, size, stream: inStream, newChunk }: { id: string, size: number, stream: ReadableStream<Uint8Array>, newChunk: (chunk: Chunk) => void }, extra) => {
-    const { stream, info } = await remux({ size, stream: inStream, autoStart: true })
+  'REMUX': makeCallListener(async ({
+    id,
+    size,
+    stream: inStream,
+    newChunk,
+    newSubtitles
+  }: {
+    id: string
+    size: number
+    stream: ReadableStream<Uint8Array>
+    newChunk: (chunk: Chunk) => void
+    newSubtitles: (data: { attachments, tracks } | { subtitles }) => void
+  }, extra) => {
+    const mkvStream = makeSubtitleExtractor({ id, stream: inStream, newSubtitles })
+    const { stream, info } = await remux({ size, stream: mkvStream, autoStart: true })
     // const reader = stream.getReader()
-    const { mime, info: mp4info } = await makeMp4Extracter({ id, stream, size, newChunk })
+    const { mime, info: mp4info } = await makeMp4Extractor({ id, stream, size, newChunk })
     return {
       mime,
       info,
