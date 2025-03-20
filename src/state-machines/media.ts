@@ -1,7 +1,7 @@
 import type { Attachment, Index, SubtitleFragment } from 'libav-wasm/build/worker'
 
 import { makeRemuxer } from 'libav-wasm'
-import { assign, setup, sendTo, enqueueActions } from 'xstate'
+import { assign, setup, sendTo, enqueueActions, emit } from 'xstate'
 
 import mediaPropertiesLogic from './media-properties'
 import mediaSourceLogic, { MediaSourceOptions } from './media-source'
@@ -195,9 +195,9 @@ export default setup({
         'PAUSE': { actions: sendTo('media', ({ event }) => event) },
         'SET_TIME': { actions: sendTo('media', ({ event }) => event) },
         'SET_PLAYBACK_RATE': { actions: sendTo('media', ({ event }) => event) },
-        'PLAYING': { actions: assign({ media: ({ context }) => ({ ...context.media, paused: false }) }) },
-        'PAUSED': { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
-        'ENDED': { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
+        'PLAYING': { actions: [assign({ media: ({ context }) => ({ ...context.media, paused: false }) }), emit({ type: 'PLAYING' })] },
+        'PAUSED': { actions: [assign({ media: ({ context }) => ({ ...context.media, paused: true }) }), emit({ type: 'PAUSED' })] },
+        'ENDED': { actions: [assign({ media: ({ context }) => ({ ...context.media, paused: true }) }), emit({ type: 'PAUSED' })] },
         'TIME_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, currentTime: event.currentTime }) }) },
         'VOLUME_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, muted: event.muted, volume: event.volume }) }) },
         'SET_VOLUME': { actions: sendTo('media', ({ event }) => event) },

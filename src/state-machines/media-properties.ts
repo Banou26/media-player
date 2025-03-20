@@ -25,12 +25,14 @@ export default fromCallback<MediaPropertiesEvents, MediaPropertiesInput, MediaPr
 
   receive((event) => {
     if (event.type === 'PLAY') {
-      videoElement.play()
-      handlePlay()
+      videoElement
+        .play()
+        .then(() => handlePlay())
+        .catch(() => handlePause())
     }
     if (event.type === 'PAUSE') {
       videoElement.pause()
-      handlePlay()
+      handlePause()
     }
     if (event.type === 'SET_TIME') {
       videoElement.currentTime = event.value

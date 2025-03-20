@@ -61,7 +61,21 @@ export const FKNVideoRoot = (
 
   useEffect(() => {
     if (!options.autoplay || duration === undefined) return
+    const failSubscription = mediaActor.on('PLAYING', () => {
+      console.log('autoplay succeeded')
+      unsubscribe()
+    })
+    const succeedSubscription = mediaActor.on('PAUSED', () => {
+      console.log('autoplay failed')
+      unsubscribe()
+    })
+    const unsubscribe = () => {
+      failSubscription.unsubscribe()
+      succeedSubscription.unsubscribe()
+    }
+    console.log('send play')
     mediaActor.send({ type: 'PLAY' })
+    return () => unsubscribe()
   }, [duration, options.autoplay])
 
   useEffect(

@@ -85,19 +85,31 @@ const Mount = () => {
 
   return (
     <div css={mountStyle}>
-      <MediaPlayer
-        title={'video.mkv'}
-        downloadedRanges={contentLength ? downloadedRanges : undefined}
-        bufferSize={BASE_BUFFER_SIZE}
-        read={read}
-        size={contentLength}
-        autoplay={true}
-        publicPath={new URL('/build/', new URL(import.meta.url).origin).toString()}
-        jassubModernWasmUrl={jassubModernWasmUrl}
-        jassubWorkerUrl={jassubWorkerUrl}
-        jassubWasmUrl={jassubWasmUrl}
-        libavWorkerUrl={libavWorkerUrl}
-      />
+      {
+        window.parent === window
+          ? (
+            <iframe
+              src='http://localhost:4561/build/index.html'
+              allow='fullscreen; autoplay *'
+              style={{ width: '100%', height: '100%' }}
+            />
+          )
+          : (
+            <MediaPlayer
+              title={'video.mkv'}
+              downloadedRanges={contentLength ? downloadedRanges : undefined}
+              bufferSize={BASE_BUFFER_SIZE}
+              read={read}
+              size={contentLength}
+              autoplay={true}
+              publicPath={new URL('/build/', new URL(import.meta.url).origin).toString()}
+              jassubModernWasmUrl={jassubModernWasmUrl}
+              jassubWorkerUrl={jassubWorkerUrl}
+              jassubWasmUrl={jassubWasmUrl}
+              libavWorkerUrl={libavWorkerUrl}
+            />
+          )
+      }
     </div>
   )
 }
