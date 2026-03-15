@@ -4,7 +4,6 @@ import { makeRemuxer } from 'libav-wasm'
 import PQueue from 'p-queue'
 
 import { fromAsyncCallback } from './utils'
-import { toStreamChunkSize } from '../utils'
 import { DownloadedRange } from '../utils/context'
 
 type ExtendedIndex = Index & { duration?: number }
@@ -31,13 +30,10 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
   const { remuxerOptions } = input
   const { publicPath, workerUrl, bufferSize, length, read } = remuxerOptions
   
-  let resolve: (value: void) => void
-  const readyPromise = new Promise<void>(_resolve => {
-    resolve = _resolve
-  })
+  const ready = Promise.withResolvers<void>()
 
   receive(async (event) => {
-    await readyPromise
+    await ready.promise
     if (event.type === 'DOWNLOADED_RANGES_UPDATED') {
       // take 1 index every 5seconds
       const selectedIndexes =
@@ -114,8 +110,7 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
       sendBack({ type: 'NEW_THUMBNAIL', thumbnail })
     })
 
-  // @ts-expect-error
-  resolve()
+  ready.resolve()
 
   return () => {
     remuxer.destroy()

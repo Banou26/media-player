@@ -243,7 +243,7 @@ const SettingsAction = () => {
           <div className='popover playback-rate'>
             <div className="back" onClick={changePopoverContent(PopoverContent.Default)}>
               <ChevronLeft />
-              <span>Plackback speed</span>
+              <span>Playback speed</span>
             </div>
             <div className="slider no-hover">
               <PlaybackSlider />
@@ -275,16 +275,6 @@ const SettingsAction = () => {
             <div onClick={() => setHideMediaStats(hideMediaStats === 'true' ? 'false' : 'true')}>
               <span>Hide stats</span>
               <span>{hideMediaStats === 'true' ? '✓' : ''}</span>
-            </div>
-          </div>
-        )
-      }
-      {
-        isOpenPopover && popoverContent === PopoverContent.SelectNewSources && (
-          <div className='popover sources'>
-            <div className="back" onClick={changePopoverContent(PopoverContent.Default)}>
-              <ChevronLeft />
-              <span>Select new sources</span>
             </div>
           </div>
         )

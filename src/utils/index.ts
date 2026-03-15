@@ -1,110 +1,64 @@
 
-export function debounceImmediateAndLatest<T extends (...args: any[]) => any>(
+export function debounceImmediateAndLatest<TArgs extends unknown[]>(
   wait: number,
-  func: T
-): T {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let lastArgs: any[] | null = null;
+  func: (...args: TArgs) => void
+): (...args: TArgs) => void {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  let lastArgs: TArgs | null = null
 
-  const debouncedFunction = function(...args: any[]) {
-    // @ts-expect-error
-    const context = this;
-
+  return (...args: TArgs) => {
     if (timeoutId === null) {
-      // Call immediately on the first call
-      func.apply(context, args);
+      func(...args)
     } else {
-      // Store the latest arguments for the last call
-      lastArgs = args;
+      lastArgs = args
     }
 
-    clearTimeout(timeoutId as ReturnType<typeof setTimeout>);
+    clearTimeout(timeoutId as ReturnType<typeof setTimeout>)
 
     timeoutId = setTimeout(() => {
       if (lastArgs) {
-        func.apply(context, lastArgs);
-        lastArgs = null;
+        func(...lastArgs)
+        lastArgs = null
       }
-      timeoutId = null;
-    }, wait);
-  };
-
-  return debouncedFunction as T;
+      timeoutId = null
+    }, wait)
+  }
 }
 
-export const queuedThrottleWithLastCall = <T2 extends any[], T extends (...args: T2) => any>(time: number, func: T) => {
-  let runningFunction: Promise<ReturnType<T>> | undefined
-  let lastCall: Promise<ReturnType<T>> | undefined
-  let lastCallArguments: T2 | undefined
+export const queuedThrottleWithLastCall = <TArgs extends unknown[]>(
+  time: number,
+  func: (...args: TArgs) => Promise<void>
+) => {
+  let running = false
+  let pendingArgs: TArgs | undefined
 
-  const checkForLastCall = (
-    timeStart: number,
-    resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void,
-    reject: (reason?: any) => void
-  ) =>
-    (result: ReturnType<T>) => {
-      const currentTime = performance.now()
-      setTimeout(() => {
-        if (!lastCallArguments) {
-          runningFunction = undefined
-          lastCall = undefined
-          return
-        }
-        const funcResult = (async () => (func(...lastCallArguments)))()
-        lastCallArguments = undefined
-        funcResult
-          .then(resolve)
-          .catch((err) => {
-            console.error(err)
-            reject(err)
-          })
-
-        let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
-        let _reject: (reason?: any) => void
-        lastCall = new Promise((resolve, reject) => {
-          _resolve = resolve
-          _reject = reject
-        })
-  
-        runningFunction =
-          funcResult
-            // @ts-ignore
-            .then(checkForLastCall(currentTime, _resolve, _reject))
-            // @ts-ignore
-            .catch(err => {
-              console.error(err)
-              return checkForLastCall(timeStart, _resolve, _reject)(err)
-            })
-      }, time - (currentTime - timeStart))
-      return result
+  const execute = async (args: TArgs) => {
+    running = true
+    const start = performance.now()
+    try {
+      await func(...args)
+    } catch (err) {
+      console.error(err)
     }
+    if (pendingArgs) {
+      const nextArgs = pendingArgs
+      pendingArgs = undefined
+      const elapsed = performance.now() - start
+      const delay = Math.max(0, time - elapsed)
+      if (delay > 0) {
+        await new Promise<void>(resolve => setTimeout(resolve, delay))
+      }
+      await execute(nextArgs)
+    } else {
+      running = false
+    }
+  }
 
-  return (...args: Parameters<T>) => {
-    lastCallArguments = args
-    if (!runningFunction) {
-      const timeStart = performance.now()
-      const funcResult = (async () => (func(...args)))()
-      lastCallArguments = undefined
-      let _resolve: (value: ReturnType<T> | PromiseLike<ReturnType<T>>) => void
-      let _reject: (reason?: any) => void
-      lastCall = new Promise((resolve, reject) => {
-        _resolve = resolve
-        _reject = reject
-      })
-
-      runningFunction =
-        funcResult
-            // @ts-ignore
-          .then(checkForLastCall(timeStart, _resolve, _reject))
-            // @ts-ignore
-          .catch(err => {
-            console.error(err)
-            return checkForLastCall(timeStart, _resolve, _reject)(err)
-          })
-
-      return funcResult
-  } else {
-      return lastCall
+  return (...args: TArgs) => {
+    if (running) {
+      pendingArgs = args
+    } else {
+      execute(args)
     }
   }
 }
@@ -127,24 +81,24 @@ export const toStreamChunkSize = (SIZE: number) => (stream: ReadableStream) =>
           currentSize += leftOverData.byteLength
           this.leftOverData = undefined
         }
-  
+
         if (done) {
           const finalResult = { buffer: buffer.slice(0, currentSize), currentSize, done }
           this.reader = undefined
           this.leftOverData = undefined
           return finalResult
         }
-  
+
         let newSize
         const slicedBuffer = newBuffer.slice(0, SIZE - currentSize)
         newSize = currentSize + slicedBuffer.byteLength
         buffer.set(slicedBuffer, currentSize)
-  
+
         if (newSize === SIZE) {
           this.leftOverData = newBuffer.slice(SIZE - currentSize)
           return { buffer, currentSize: newSize, done: false }
         }
-        
+
         return accumulate({ buffer, currentSize: newSize })
       }
       const { buffer, done } = await accumulate()
@@ -180,7 +134,7 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
             for (const buffer of this.buffers) controller.enqueue(buffer)
             controller.close()
           } catch (err) {
-            // console.error(err)
+            // stream already closed
           }
           return
         }
@@ -190,7 +144,7 @@ export const toBufferedStream = (SIZE: number) => (stream: ReadableStream) =>
 
       const tryToBuffer = async (): Promise<void> => {
         if (this.buffers.length >= SIZE) return
-        
+
         if (this.buffers.length === 0) {
           const buffer = await pull()
           if (!buffer) return

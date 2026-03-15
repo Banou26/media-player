@@ -1,7 +1,7 @@
 import { makeRemuxer } from 'libav-wasm'
 
 import { fromAsyncCallback } from './utils'
-import { queuedThrottleWithLastCall, toStreamChunkSize } from '../utils'
+import { queuedThrottleWithLastCall } from '../utils'
 import { Attachment, SubtitleFragment } from 'libav-wasm/build/worker'
 
 type DataSourceEvents =
@@ -49,8 +49,8 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
         sendBack({ type: 'NEW_SUBTITLE_FRAGMENTS', subtitles })
       }
       sendBack({ type: 'DATA', data })
-    } catch (err: any) {
-      if (err.message === 'Cancelled') return
+    } catch (err) {
+      if (err instanceof Error && err.message === 'Cancelled') return
       console.error(err)
     }
   })
@@ -71,8 +71,8 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
           })
         sendBack({ type: 'TIMESTAMP_OFFSET', timestampOffset: pts })
         sendBack({ type: 'DATA', data })
-      } catch (err: any) {
-        if (err.message === 'Cancelled') return
+      } catch (err) {
+        if (err instanceof Error && err.message === 'Cancelled') return
         console.error(err)
       }
     }

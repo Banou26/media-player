@@ -34,8 +34,8 @@ const defaultBufferTargetTime = 30
 export default fromAsyncCallback<MediaSourceEvents, MediaSourceInput, MediaSourceEmittedEvents>(async ({ sendBack, receive, input, self, emit }) => {
   const { videoElement, preEvictionTime, postEvictionTime, bufferTargetTime } = input
 
-  const handlError = () => console.error(videoElement.error)
-  videoElement.addEventListener('error', handlError)
+  const handleError = () => console.error(videoElement.error)
+  videoElement.addEventListener('error', handleError)
 
   const mediaSource = new MediaSource()
   const mediaSourceUrl = URL.createObjectURL(mediaSource)
@@ -104,7 +104,9 @@ export default fromAsyncCallback<MediaSourceEvents, MediaSourceInput, MediaSourc
   const interval = setInterval(async () => {
     await unbuffer()
     const timeRanges = getTimeRanges(sourceBuffer)
-    const maxBufferedTime  = Math.max(...timeRanges.map(({ end }) => end))
+    const maxBufferedTime = timeRanges.length > 0
+      ? Math.max(...timeRanges.map(({ end }) => end))
+      : 0
     if (maxBufferedTime < getBufferTargetTime()) {
       sendBack({ type: 'NEED_DATA' })
     }
@@ -121,7 +123,7 @@ export default fromAsyncCallback<MediaSourceEvents, MediaSourceInput, MediaSourc
   return () => {
     URL.revokeObjectURL(mediaSourceUrl)
     clearInterval(interval)
-    videoElement.removeEventListener('error', handlError)
+    videoElement.removeEventListener('error', handleError)
     mediaSource.removeEventListener('sourceopen', handleSourceOpen)
     mediaSource.removeEventListener('sourceended', handleSourceEnded)
     mediaSource.removeEventListener('error', handleSourceError)

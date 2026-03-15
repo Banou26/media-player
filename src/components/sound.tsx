@@ -5,7 +5,7 @@ import { MediaMachineContext } from "../state-machines"
 import { TooltipDisplay } from "./tooltip-display"
 import { fonts } from "../utils/fonts"
 import VolumeSlider from "./volume-slider"
-import { MutableRefObject, useMemo } from 'react'
+import { useMemo } from 'react'
 import { linearToLogVolume, logToLinearVolume } from "../utils/volume-utils"
 
 const style = css`
@@ -49,8 +49,7 @@ const style = css`
   }
 `
 
-// todo: try to find a better type for `ref`
-const Sound = ({ ref }: { ref: any }) => {
+const Sound = ({ ref }: { ref?: ((element: HTMLButtonElement | null) => void) }) => {
   const mediaActor = MediaMachineContext.useActorRef()
   const volume = MediaMachineContext.useSelector((state) => state.context.media.volume)
   const muted = MediaMachineContext.useSelector((state) => state.context.media.muted)

@@ -138,7 +138,7 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
   const muted = MediaMachineContext.useSelector((state) => state.context.media.muted)
   const currentTime = MediaMachineContext.useSelector((state) => state.context.media.currentTime)
   const duration = MediaMachineContext.useSelector((state) => state.context.media.duration)
-  const [volumeElement, setVolumeElement] = useState<HTMLDivElement | undefined>()
+  const [volumeElement, setVolumeElement] = useState<HTMLElement | null>(null)
   const [hideMediaStats, _] = useLocalStorage('hideMediaStats', 'false') as [booleanType, (newValue: booleanType) => void]
   
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -153,13 +153,28 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
     }
   }, [])
 
-  const toggleFullScreen = () => {
-    if (!document.fullscreenElement) {
-      if (containerRef.current) {
-        containerRef.current.requestFullscreen()
+  const toggleFullScreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current?.requestFullscreen()
+      } else {
+        await document.exitFullscreen()
       }
-    } else {
-      document.exitFullscreen()
+    } catch (err) {
+      console.error('Fullscreen error:', err)
+    }
+  }
+
+  const togglePiP = async () => {
+    try {
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture()
+      } else {
+        const video = chromeContext.videoElement
+        if (video) await video.requestPictureInPicture()
+      }
+    } catch (err) {
+      console.error('Picture-in-Picture error:', err)
     }
   }
 
@@ -175,7 +190,7 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
       muted,
       volume: newLogVolume
     })
-  }, [mediaActor.id, muted, volume])
+  }, [mediaActor, muted, volume])
 
   useEffect(() => {
     const eventListener = (ev: KeyboardEvent) => {
@@ -288,6 +303,7 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
               <button
                 className='picture-in-picture'
                 type='button'
+                onClick={togglePiP}
               >
                 <img src={pictureInPicture}  />
               </button>

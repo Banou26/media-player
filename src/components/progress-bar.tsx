@@ -4,6 +4,7 @@ import { css } from '@emotion/react'
 import { MediaMachineContext } from '../state-machines'
 import { MediaPlayerContext } from '../utils/context'
 import useScrub from '../utils/use-scrub'
+import { formatTime } from '../utils/time'
 import { fonts } from '../utils/fonts'
 
 const style = css`
@@ -166,16 +167,9 @@ export const ProgressBar = () => {
     [duration, indexes.length, mediaPlayerContext.downloadedRanges?.map(({ startByteOffset, endByteOffset }) => `${startByteOffset}/${endByteOffset}`).join(',')]
   )
 
-  const cusorTimeString = useMemo(() => {
+  const cursorTimeString = useMemo(() => {
     if (!progressBarHoverTime || progressBarHoverTime < 0) return undefined
-    const hours = Math.floor(progressBarHoverTime! / 3600)
-    const minutes = Math.floor((progressBarHoverTime! - hours * 3600) / 60)
-    const seconds = Math.floor(progressBarHoverTime! - hours * 3600 - minutes * 60)
-    const hoursString =
-      hours > 0
-        ? `${hours}:`
-        : ''
-    return `${hoursString}${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds}`
+    return formatTime(progressBarHoverTime)
   }, [progressBarHoverTime])
 
   useEffect(() => {
@@ -185,9 +179,8 @@ export const ProgressBar = () => {
   }, [mediaActor, seekScrubValue, duration])
 
   const scaleX = useMemo(() => {
-    return typeof duration !== 'number' || typeof currentTime !== 'number'
-      ? 0
-      : 1 / ((duration ?? 0) / (currentTime ?? 0))
+    if (typeof duration !== 'number' || typeof currentTime !== 'number' || duration === 0) return 0
+    return currentTime / duration
   }, [duration, currentTime])
 
   const thumbnail = useMemo(() => {
@@ -214,9 +207,9 @@ export const ProgressBar = () => {
           ? (
             <div
               className="cursor-time"
-              style={{ left: `clamp(1.8rem, ${1 / ((duration ?? 0) / (progressBarHoverTime ?? 1)) * 100}%, calc(100% - 1.8rem))` }}
+              style={{ left: `clamp(1.8rem, ${duration ? (progressBarHoverTime / duration) * 100 : 0}%, calc(100% - 1.8rem))` }}
             >
-              {cusorTimeString}
+              {cursorTimeString}
             </div>
           )
           : undefined
@@ -238,7 +231,7 @@ export const ProgressBar = () => {
       <div className="padding" onMouseDown={seekScrub}></div>
       <div
         className="thumbnail"
-        style={{ left: `clamp(12.5rem, ${1 / ((duration ?? 0) / (progressBarHoverTime ?? 1)) * 100}%, calc(100% - 12.5rem))` }}
+        style={{ left: `clamp(12.5rem, ${duration ? ((progressBarHoverTime ?? 0) / duration) * 100 : 0}%, calc(100% - 12.5rem))` }}
       >
         {
           thumbnail
