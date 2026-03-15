@@ -1,4 +1,4 @@
-import { ReactNode, RefObject, useCallback, useContext, useEffect, useState } from 'react'
+import { ReactNode, RefObject, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { css } from '@emotion/react'
 import { Maximize, Minimize, Pause, Play, RotateCcw } from 'react-feather'
 
@@ -138,10 +138,12 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
   const muted = MediaMachineContext.useSelector((state) => state.context.media.muted)
   const currentTime = MediaMachineContext.useSelector((state) => state.context.media.currentTime)
   const duration = MediaMachineContext.useSelector((state) => state.context.media.duration)
+  const canvasElement = MediaMachineContext.useSelector((state) => state.context.canvasElement)
   const [volumeElement, setVolumeElement] = useState<HTMLElement | null>(null)
   const [hideMediaStats, _] = useLocalStorage('hideMediaStats', 'false') as [booleanType, (newValue: booleanType) => void]
-  
+
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const pipCleanup = useRef<AbortController | null>(null)
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -165,16 +167,65 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
     }
   }
 
+  useEffect(() => {
+    return () => { pipCleanup.current?.abort() }
+  }, [])
+
   const togglePiP = async () => {
     try {
       if (document.pictureInPictureElement) {
         await document.exitPictureInPicture()
-      } else {
-        const video = chromeContext.videoElement
-        if (video) await video.requestPictureInPicture()
+        return
       }
+
+      const video = chromeContext.videoElement
+      if (!video) return
+
+      if (!canvasElement) {
+        await video.requestPictureInPicture()
+        return
+      }
+
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      canvas.width = video.videoWidth
+      canvas.height = video.videoHeight
+
+      const pipVideo = document.createElement('video')
+      pipVideo.srcObject = canvas.captureStream()
+      pipVideo.muted = true
+
+      const ctrl = new AbortController()
+      pipCleanup.current?.abort()
+      pipCleanup.current = ctrl
+
+      let frameId: number
+      const renderFrame = () => {
+        video.paused ? pipVideo.pause() : pipVideo.play()
+        ctx.drawImage(video, 0, 0)
+        if (canvas.width && canvas.height) {
+          ctx.drawImage(canvasElement, 0, 0, canvas.width, canvas.height)
+        }
+        frameId = video.requestVideoFrameCallback(renderFrame)
+      }
+
+      ctrl.signal.addEventListener('abort', () => {
+        video.cancelVideoFrameCallback(frameId)
+        canvas.remove()
+        pipVideo.remove()
+      })
+
+      pipVideo.addEventListener('leavepictureinpicture', () => ctrl.abort(), { signal: ctrl.signal })
+
+      setTimeout(renderFrame, 10)
+      await pipVideo.play()
+      if (video.paused) pipVideo.pause()
+      await pipVideo.requestPictureInPicture()
     } catch (err) {
       console.error('Picture-in-Picture error:', err)
+      pipCleanup.current?.abort()
     }
   }
 
