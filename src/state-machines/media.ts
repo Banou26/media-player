@@ -1,4 +1,5 @@
 import type { Attachment, Index, SubtitleFragment } from 'libav-wasm/build/worker'
+import type { VideoTarget } from '../types/video-target'
 
 import { makeRemuxer } from 'libav-wasm'
 import { assign, setup, sendTo, enqueueActions } from 'xstate'
@@ -12,9 +13,11 @@ import { JassubOptions } from 'jassub'
 import { DownloadedRange } from '../utils/context'
 
 type MediaContext = {
+  mode: 'local' | 'target'
   mediaSourceOptions: MediaSourceOptions | undefined
   subtitlesRendererOptions: Omit<JassubOptions, 'video' | 'canvas'> | undefined
   remuxerOptions: Parameters<typeof makeRemuxer>[0] | undefined
+  videoTarget: VideoTarget | undefined
   videoElement: HTMLVideoElement | undefined
   canvasElement: HTMLCanvasElement | undefined
   media: {
@@ -35,9 +38,11 @@ type MediaContext = {
 }
 
 const initialContext: MediaContext = {
+  mode: 'local',
   mediaSourceOptions: undefined,
   subtitlesRendererOptions: undefined,
   remuxerOptions: undefined,
+  videoTarget: undefined,
   videoElement: undefined,
   canvasElement: undefined,
   media: {
@@ -65,8 +70,10 @@ export default setup({
       | { type: 'SUBTITLES_RENDERER_OPTIONS', subtitlesRendererOptions: Omit<JassubOptions, 'video' | 'canvas'> }
       | { type: 'REMUXER_OPTIONS', remuxerOptions: Parameters<typeof makeRemuxer>[0] }
       | { type: 'SET_VIDEO_ELEMENT', videoElement: HTMLVideoElement }
+      | { type: 'SET_VIDEO_TARGET', videoTarget: VideoTarget }
       | { type: 'SET_CANVAS_ELEMENT', canvasElement: HTMLCanvasElement }
-      | { type: 'IS_READY' }
+      | { type: 'IS_READY_LOCAL' }
+      | { type: 'IS_READY_TARGET' }
       | { type: 'PLAY' }
       | { type: 'PAUSE' }
       | { type: 'SET_TIME', value: number }
@@ -93,9 +100,18 @@ export default setup({
       | { type: 'DESTROY' }
   },
   actions: {
-    isReady: enqueueActions(({ context, enqueue }) => {
-      if (context.videoElement && context.canvasElement && context.remuxerOptions && context.subtitlesRendererOptions && context.mediaSourceOptions) {
-        enqueue.raise({ type: 'IS_READY' })
+    checkReady: enqueueActions(({ context, enqueue }) => {
+      if (context.mode === 'target' && context.videoTarget) {
+        enqueue.raise({ type: 'IS_READY_TARGET' })
+      } else if (
+        context.mode === 'local'
+        && context.videoElement
+        && context.canvasElement
+        && context.remuxerOptions
+        && context.subtitlesRendererOptions
+        && context.mediaSourceOptions
+      ) {
+        enqueue.raise({ type: 'IS_READY_LOCAL' })
       }
     })
   },
@@ -112,18 +128,34 @@ export default setup({
   on: {
     SET_VIDEO_ELEMENT: {
       actions: [
-        assign({ videoElement: ({ event }) => event.videoElement }),
-        { type: 'isReady' }
+        assign({
+          videoElement: ({ event }) => event.videoElement,
+          videoTarget: ({ event }) => event.videoElement
+        }),
+        { type: 'checkReady' }
+      ]
+    },
+    SET_VIDEO_TARGET: {
+      actions: [
+        assign({
+          videoTarget: ({ event }) => event.videoTarget,
+          mode: () => 'target' as const
+        }),
+        { type: 'checkReady' }
       ]
     },
     SET_CANVAS_ELEMENT: {
       actions: [
         assign({ canvasElement: ({ event }) => event.canvasElement }),
-        { type: 'isReady' }
+        { type: 'checkReady' }
       ]
     },
-    IS_READY: {
+    IS_READY_LOCAL: {
       target: '.OK',
+      actions: assign({ isReady: () => true })
+    },
+    IS_READY_TARGET: {
+      target: '.OK_TARGET',
       actions: assign({ isReady: () => true })
     },
   },
@@ -133,29 +165,63 @@ export default setup({
         MEDIA_SOURCE_OPTIONS: {
           actions: [
             assign({ mediaSourceOptions: ({ event }) => event.mediaSourceOptions }),
-            { type: 'isReady' }
+            { type: 'checkReady' }
           ]
         },
         REMUXER_OPTIONS: {
           actions: [
             assign({ remuxerOptions: ({ event }) => event.remuxerOptions }),
-            { type: 'isReady' }
+            { type: 'checkReady' }
           ]
         },
         SUBTITLES_RENDERER_OPTIONS: {
           actions: [
             assign({ subtitlesRendererOptions: ({ event }) => event.subtitlesRendererOptions }),
-            { type: 'isReady' }
+            { type: 'checkReady' }
           ]
         },
       }
     },
+
+    // Target mode: only media-properties actor (controls remote video)
+    OK_TARGET: {
+      invoke: [
+        {
+          id: 'media',
+          src: 'mediaLogic',
+          input: ({ context }) => ({ videoTarget: context.videoTarget! }),
+        }
+      ],
+      on: {
+        // Media element controls -> forward to media-properties actor
+        PLAY: { actions: sendTo('media', ({ event }) => event) },
+        PAUSE: { actions: sendTo('media', ({ event }) => event) },
+        SET_TIME: { actions: sendTo('media', ({ event }) => event) },
+        SET_VOLUME: { actions: sendTo('media', ({ event }) => event) },
+        SET_PLAYBACK_RATE: { actions: sendTo('media', ({ event }) => event) },
+
+        // Media element state updates <- from media-properties actor
+        PLAYING: { actions: assign({ media: ({ context }) => ({ ...context.media, paused: false }) }) },
+        PAUSED: { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
+        ENDED: { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
+        DURATION_UPDATE: { actions: assign({ media: ({ context, event }) => ({ ...context.media, duration: event.duration }) }) },
+        VOLUME_UPDATE: { actions: assign({ media: ({ context, event }) => ({ ...context.media, muted: event.muted, volume: event.volume }) }) },
+        PLAYBACK_RATE_UPDATE: { actions: assign({ media: ({ context, event }) => ({ ...context.media, playbackRate: event.playbackRate }) }) },
+        TIME_UPDATE: {
+          actions: assign({ media: ({ context, event }) => ({ ...context.media, currentTime: event.currentTime }) })
+        },
+
+        DESTROY: { target: 'WAITING' }
+      }
+    },
+
+    // Local mode: all actors (current behavior)
     OK: {
       invoke: [
         {
           id: 'media',
           src: 'mediaLogic',
-          input: ({ context }) => ({ videoElement: context.videoElement!, remuxerOptions: context.remuxerOptions! }),
+          input: ({ context }) => ({ videoTarget: context.videoElement! }),
         },
         {
           id: 'mediaSource',

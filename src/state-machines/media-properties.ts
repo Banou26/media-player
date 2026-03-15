@@ -1,3 +1,5 @@
+import type { VideoTarget } from '../types/video-target'
+
 import { fromCallback } from 'xstate'
 
 type MediaPropertiesEvents =
@@ -18,14 +20,14 @@ type MediaPropertiesEmittedEvents =
   | { type: 'SEEKING', currentTime: number }
   | { type: 'ENDED' }
 
-type MediaPropertiesInput = { videoElement: HTMLVideoElement }
+type MediaPropertiesInput = { videoTarget: VideoTarget }
 
 export default fromCallback<MediaPropertiesEvents, MediaPropertiesInput, MediaPropertiesEmittedEvents>(({ sendBack, receive, input }) => {
-  const { videoElement } = input
+  const { videoTarget } = input
 
   receive((event) => {
     if (event.type === 'PLAY') {
-      videoElement
+      videoTarget
         .play()
         .then(() => handlePlay())
         .catch((error) => {
@@ -33,20 +35,20 @@ export default fromCallback<MediaPropertiesEvents, MediaPropertiesInput, MediaPr
         })
     }
     if (event.type === 'PAUSE') {
-      videoElement.pause()
+      videoTarget.pause()
       handlePause()
     }
     if (event.type === 'SET_TIME') {
-      videoElement.currentTime = event.value
+      videoTarget.currentTime = event.value
       handleTimeUpdate()
     }
     if (event.type === 'SET_VOLUME') {
-      videoElement.volume = event.volume
-      videoElement.muted = event.muted
+      videoTarget.volume = event.volume
+      videoTarget.muted = event.muted
       handleVolumeUpdate()
     }
     if (event.type === 'SET_PLAYBACK_RATE') {
-      videoElement.playbackRate = event.playbackRate
+      videoTarget.playbackRate = event.playbackRate
       handlePlaybackRateUpdate()
     }
   })
@@ -54,29 +56,29 @@ export default fromCallback<MediaPropertiesEvents, MediaPropertiesInput, MediaPr
   const handlePlay = () => sendBack({ type: 'PLAYING' })
   const handlePause = () => sendBack({ type: 'PAUSED' })
   const handleEnded = () => sendBack({ type: 'ENDED' })
-  const handleTimeUpdate = () => sendBack({ type: 'TIME_UPDATE', currentTime: videoElement.currentTime })
-  const handleVolumeUpdate = () => sendBack({ type: 'VOLUME_UPDATE', muted: videoElement.muted, volume: videoElement.volume })
-  const handlePlaybackRateUpdate = () => sendBack({ type: 'PLAYBACK_RATE_UPDATE', playbackRate: videoElement.playbackRate })
-  const handleSeeking = () => sendBack({ type: 'SEEKING', currentTime: videoElement.currentTime })
-  const handleDurationChange = () => sendBack({ type: 'DURATION_UPDATE', duration: videoElement.duration })
+  const handleTimeUpdate = () => sendBack({ type: 'TIME_UPDATE', currentTime: videoTarget.currentTime })
+  const handleVolumeUpdate = () => sendBack({ type: 'VOLUME_UPDATE', muted: videoTarget.muted, volume: videoTarget.volume })
+  const handlePlaybackRateUpdate = () => sendBack({ type: 'PLAYBACK_RATE_UPDATE', playbackRate: videoTarget.playbackRate })
+  const handleSeeking = () => sendBack({ type: 'SEEKING', currentTime: videoTarget.currentTime })
+  const handleDurationChange = () => sendBack({ type: 'DURATION_UPDATE', duration: videoTarget.duration })
 
-  videoElement.addEventListener('play', handlePlay)
-  videoElement.addEventListener('pause', handlePause)
-  videoElement.addEventListener('ended', handleEnded)
-  videoElement.addEventListener('timeupdate', handleTimeUpdate)
-  videoElement.addEventListener('volumechange', handleVolumeUpdate)
-  videoElement.addEventListener('ratechange', handlePlaybackRateUpdate)
-  videoElement.addEventListener('seeking', handleSeeking)
-  videoElement.addEventListener('durationchange', handleDurationChange)
+  videoTarget.addEventListener('play', handlePlay)
+  videoTarget.addEventListener('pause', handlePause)
+  videoTarget.addEventListener('ended', handleEnded)
+  videoTarget.addEventListener('timeupdate', handleTimeUpdate)
+  videoTarget.addEventListener('volumechange', handleVolumeUpdate)
+  videoTarget.addEventListener('ratechange', handlePlaybackRateUpdate)
+  videoTarget.addEventListener('seeking', handleSeeking)
+  videoTarget.addEventListener('durationchange', handleDurationChange)
 
   return () => {
-    videoElement.removeEventListener('play', handlePlay)
-    videoElement.removeEventListener('pause', handlePause)
-    videoElement.removeEventListener('ended', handleEnded)
-    videoElement.removeEventListener('timeupdate', handleTimeUpdate)
-    videoElement.removeEventListener('volumechange', handleVolumeUpdate)
-    videoElement.removeEventListener('ratechange', handlePlaybackRateUpdate)
-    videoElement.removeEventListener('seeking', handleSeeking)
-    videoElement.removeEventListener('durationchange', handleDurationChange)
+    videoTarget.removeEventListener('play', handlePlay)
+    videoTarget.removeEventListener('pause', handlePause)
+    videoTarget.removeEventListener('ended', handleEnded)
+    videoTarget.removeEventListener('timeupdate', handleTimeUpdate)
+    videoTarget.removeEventListener('volumechange', handleVolumeUpdate)
+    videoTarget.removeEventListener('ratechange', handlePlaybackRateUpdate)
+    videoTarget.removeEventListener('seeking', handleSeeking)
+    videoTarget.removeEventListener('durationchange', handleDurationChange)
   }
 })

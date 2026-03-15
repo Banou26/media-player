@@ -138,6 +138,7 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
   const muted = MediaMachineContext.useSelector((state) => state.context.media.muted)
   const currentTime = MediaMachineContext.useSelector((state) => state.context.media.currentTime)
   const duration = MediaMachineContext.useSelector((state) => state.context.media.duration)
+  const mode = MediaMachineContext.useSelector((state) => state.context.mode)
   const canvasElement = MediaMachineContext.useSelector((state) => state.context.canvasElement)
   const [volumeElement, setVolumeElement] = useState<HTMLElement | null>(null)
   const [hideMediaStats, _] = useLocalStorage('hideMediaStats', 'false') as [booleanType, (newValue: booleanType) => void]
@@ -348,23 +349,25 @@ export const ControlBar = ({ mediaInformation, containerRef }: { mediaInformatio
               : null
           }
           <SettingsAction />
-          <TooltipDisplay
-            id='picture-in-picture'
-            text={
-              <button
-                className='picture-in-picture'
-                type='button'
-                onClick={togglePiP}
-              >
-                <img src={pictureInPicture}  />
-              </button>
-            }
-            toolTipText={
-              <span>
-                Picture in picture
-              </span>
-            }
-          />
+          {mode !== 'target' && (
+            <TooltipDisplay
+              id='picture-in-picture'
+              text={
+                <button
+                  className='picture-in-picture'
+                  type='button'
+                  onClick={togglePiP}
+                >
+                  <img src={pictureInPicture}  />
+                </button>
+              }
+              toolTipText={
+                <span>
+                  Picture in picture
+                </span>
+              }
+            />
+          )}
           <TooltipDisplay
             id='full-screen'
             tooltipPlace='top-end'

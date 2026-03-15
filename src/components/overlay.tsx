@@ -50,6 +50,7 @@ const loadingInformationStyle = css`
 
 export const Overlay = ({ loadingInformation }: { loadingInformation?: ReactNode }) => {
   const mediaActor = MediaMachineContext.useActorRef()
+  const mode = MediaMachineContext.useSelector((state) => state.context.mode)
   const duration = MediaMachineContext.useSelector((state) => state.context.media.duration)
   const mediaPlayerContext = useContext(MediaPlayerContext)
 
@@ -85,7 +86,7 @@ export const Overlay = ({ loadingInformation }: { loadingInformation?: ReactNode
           ? <div css={loadingInformationStyle}>{loadingInformation}</div>
           : undefined
       }
-      <canvas ref={refFunction} css={style}/>
+      {mode !== 'target' && <canvas ref={refFunction} css={style}/>}
     </>
   )
 }

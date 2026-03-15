@@ -1,6 +1,7 @@
 /// <reference types="@emotion/react/types/css-prop" />
 import type { ClassAttributes, MutableRefObject, ReactNode, RefCallback } from 'react'
 import type { MediaPlayerContextType } from './utils/context'
+import type { VideoTarget } from './types/video-target'
 
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { css } from '@emotion/react'
@@ -9,6 +10,8 @@ import { MediaMachineContext } from './state-machines'
 import { MediaPlayerContext, DownloadedRange } from './utils/context'
 import useLocalStorage, { booleanType } from './utils/use-local-storage'
 import Chrome from './components/chrome'
+
+export type { VideoTarget } from './types/video-target'
 
 const BUFFER_SIZE = 2_500_000
 
@@ -35,6 +38,14 @@ export type FKNVideoOptions = {
   jassubWasmUrl: string
   jassubModernWasmUrl: string
   libavWorkerUrl: string
+}
+
+export type FKNVideoTargetOptions = {
+  videoTarget: VideoTarget
+  title?: string
+  autoplay?: boolean
+  mediaInformation?: ReactNode
+  loadingInformation?: ReactNode
 }
 
 export const FKNVideoRoot = (
@@ -156,6 +167,66 @@ export const FKNVideoRoot = (
   )
 }
 
+const FKNVideoTargetRoot = (
+  { options, children }:
+  { options: FKNVideoTargetOptions, children: ReactNode }
+) => {
+  const mediaActor = MediaMachineContext.useActorRef()
+  const status = MediaMachineContext.useSelector((state) => state.value)
+  const volume = MediaMachineContext.useSelector((state) => state.context.media.volume)
+  const muted = MediaMachineContext.useSelector((state) => state.context.media.muted)
+  const isReady = MediaMachineContext.useSelector((state) => state.context.isReady)
+  const duration = MediaMachineContext.useSelector((state) => state.context.media.duration)
+  const [mediaVolume, setMediaVolume] = useLocalStorage('mediaVolume', '1') as [string, (newValue: string) => void]
+  const [mediaMute, setMediaMute] = useLocalStorage('mediaMute', 'false') as [booleanType, (newValue: booleanType) => void]
+  const [firstRender, setFirstRender] = useState(true)
+
+  useEffect(() => {
+    mediaActor.send({
+      type: 'SET_VIDEO_TARGET',
+      videoTarget: options.videoTarget
+    })
+  }, [options.videoTarget])
+
+  useEffect(() => {
+    if (!options.autoplay || duration === undefined) return
+    mediaActor.send({ type: 'PLAY' })
+  }, [duration, options.autoplay])
+
+  useEffect(() => {
+    if (!isReady) return
+    if (firstRender) {
+      mediaActor.send({
+        type: 'SET_VOLUME',
+        muted: mediaMute === 'true',
+        volume:
+          isNaN(Number(mediaVolume))
+            ? 1
+            : Number(mediaVolume)
+      })
+      setFirstRender(false)
+    } else {
+      setMediaVolume(volume.toString())
+      setMediaMute(muted ? 'true' : 'false')
+    }
+  }, [isReady, volume, muted, firstRender])
+
+  useEffect(() => {
+    if (status !== 'OK_TARGET') return
+    return () => {
+      mediaActor.send({ type: 'DESTROY' })
+    }
+  }, [status])
+
+  return (
+    <div css={FKNVideoRootStyle}>
+      <Chrome mediaInformation={options.mediaInformation} loadingInformation={options.loadingInformation}>
+        {children}
+      </Chrome>
+    </div>
+  )
+}
+
 const FKNVideo = (
   { ref, ...options }:
   FKNVideoOptions & { ref?: RefCallback<HTMLVideoElement> | MutableRefObject<HTMLVideoElement | null> }
@@ -187,6 +258,31 @@ const FKNVideo = (
         <FKNVideoRoot options={options} videoElement={videoElement}>
           <video ref={refFunction} controls={false}/>
         </FKNVideoRoot>
+      </MediaMachineContext.Provider>
+    </MediaPlayerContext.Provider>
+  )
+}
+
+export const FKNVideoTarget = (
+  { children, ...options }:
+  FKNVideoTargetOptions & { children?: ReactNode }
+) => {
+  const updateContextFunction = (context: Parameters<MediaPlayerContextType['update']>[0]) => setMediaPlayerContext({ ...context, update: updateContextFunction })
+  const [chromeContext, setMediaPlayerContext] = useState<MediaPlayerContextType>({ update: updateContextFunction } as MediaPlayerContextType)
+
+  useEffect(() => {
+    setMediaPlayerContext((previousContext) => ({
+      ...previousContext,
+      title: options?.title
+    }))
+  }, [options?.title])
+
+  return (
+    <MediaPlayerContext.Provider value={chromeContext}>
+      <MediaMachineContext.Provider>
+        <FKNVideoTargetRoot options={options}>
+          {children}
+        </FKNVideoTargetRoot>
       </MediaMachineContext.Provider>
     </MediaPlayerContext.Provider>
   )
