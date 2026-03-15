@@ -151,11 +151,11 @@ export default setup({
       ]
     },
     IS_READY_LOCAL: {
-      target: '.OK',
+      target: '.ACTIVE.LOCAL',
       actions: assign({ isReady: () => true })
     },
     IS_READY_TARGET: {
-      target: '.OK_TARGET',
+      target: '.ACTIVE.TARGET',
       actions: assign({ isReady: () => true })
     },
   },
@@ -183,72 +183,8 @@ export default setup({
       }
     },
 
-    // Target mode: only media-properties actor (controls remote video)
-    OK_TARGET: {
-      invoke: [
-        {
-          id: 'media',
-          src: 'mediaLogic',
-          input: ({ context }) => ({ videoTarget: context.videoTarget! }),
-        }
-      ],
-      on: {
-        // Media element controls -> forward to media-properties actor
-        PLAY: { actions: sendTo('media', ({ event }) => event) },
-        PAUSE: { actions: sendTo('media', ({ event }) => event) },
-        SET_TIME: { actions: sendTo('media', ({ event }) => event) },
-        SET_VOLUME: { actions: sendTo('media', ({ event }) => event) },
-        SET_PLAYBACK_RATE: { actions: sendTo('media', ({ event }) => event) },
-
-        // Media element state updates <- from media-properties actor
-        PLAYING: { actions: assign({ media: ({ context }) => ({ ...context.media, paused: false }) }) },
-        PAUSED: { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
-        ENDED: { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
-        DURATION_UPDATE: { actions: assign({ media: ({ context, event }) => ({ ...context.media, duration: event.duration }) }) },
-        VOLUME_UPDATE: { actions: assign({ media: ({ context, event }) => ({ ...context.media, muted: event.muted, volume: event.volume }) }) },
-        PLAYBACK_RATE_UPDATE: { actions: assign({ media: ({ context, event }) => ({ ...context.media, playbackRate: event.playbackRate }) }) },
-        TIME_UPDATE: {
-          actions: assign({ media: ({ context, event }) => ({ ...context.media, currentTime: event.currentTime }) })
-        },
-
-        DESTROY: { target: 'WAITING' }
-      }
-    },
-
-    // Local mode: all actors (current behavior)
-    OK: {
-      invoke: [
-        {
-          id: 'media',
-          src: 'mediaLogic',
-          input: ({ context }) => ({ videoTarget: context.videoElement! }),
-        },
-        {
-          id: 'mediaSource',
-          src: 'mediaSourceLogic',
-          input: ({ context }) => ({ videoElement: context.videoElement!, remuxerOptions: context.remuxerOptions! }),
-        },
-        {
-          id: 'dataSource',
-          src: 'dataSourceLogic',
-          input: ({ context }) => ({ remuxerOptions: context.remuxerOptions! }),
-        },
-        {
-          id: 'thumbnails',
-          src: 'thumbnailsLogic',
-          input: ({ context }) => ({ remuxerOptions: context.remuxerOptions! }),
-        },
-        {
-          id: 'subtitles',
-          src: 'subtitlesLogic',
-          input: ({ context }) => ({
-            publicPath: context.remuxerOptions!.publicPath,
-            videoElement: context.videoElement!,
-            canvasElement: context.canvasElement!,
-            subtitlesRendererOptions: context.subtitlesRendererOptions!
-          }),
-        }
-      ],
+    // Active playback — shared handlers inherited by LOCAL and TARGET
+    ACTIVE: {
       on: {
         // Media element controls -> forward to media-properties actor
         PLAY: { actions: sendTo('media', ({ event }) => event) },
@@ -267,47 +203,103 @@ export default setup({
         TIME_UPDATE: {
           actions: [
             assign({ media: ({ context, event }) => ({ ...context.media, currentTime: event.currentTime }) }),
-            sendTo('subtitles', ({ event }) => event)
+            // Conditionally forward to subtitles in local mode
+            enqueueActions(({ context, enqueue, event }) => {
+              if (context.mode === 'local') {
+                enqueue.sendTo('subtitles', event)
+              }
+            })
           ]
         },
 
-        // Data pipeline: data-source <-> media-source
-        NEED_DATA: { actions: sendTo('dataSource', ({ event }) => event) },
-        SEEKING: { actions: sendTo('dataSource', ({ event }) => event) },
-        METADATA: { actions: sendTo('mediaSource', ({ event }) => event) },
-        DATA: { actions: sendTo('mediaSource', ({ event }) => event) },
-        TIMESTAMP_OFFSET: { actions: sendTo('mediaSource', ({ event }) => event) },
-        INDEXES: { actions: assign({ indexes: ({ event }) => event.indexes }) },
+        DESTROY: { target: '#(machine).WAITING' }
+      },
 
-        // Thumbnails
-        NEW_THUMBNAIL: { actions: assign({ thumbnails: ({ context, event }) => [...context.thumbnails, event.thumbnail] }) },
-        DOWNLOADED_RANGES_UPDATED: { actions: sendTo('thumbnails', ({ event }) => event) },
-
-        // Subtitles
-        NEW_ATTACHMENTS: {
-          actions: [
-            assign({ attachments: ({ context, event }) => [...context.attachments, ...event.attachments] }),
-            sendTo('subtitles', ({ event }) => event)
+      initial: 'LOCAL',
+      states: {
+        // Target mode: only media-properties actor (controls remote video)
+        TARGET: {
+          invoke: [
+            {
+              id: 'media',
+              src: 'mediaLogic',
+              input: ({ context }) => ({ videoTarget: context.videoTarget! }),
+            }
           ]
         },
-        NEW_SUBTITLE_FRAGMENTS: {
-          actions: [
-            assign({ subtitleFragments: ({ context, event }) => [...context.subtitleFragments, ...event.subtitles] }),
-            sendTo('subtitles', ({ event }) => event)
-          ]
-        },
-        SUBTITLE_STREAMS_UPDATED: {
-          actions: [
-            assign({ subtitleStreams: ({ event }) => event.subtitlesStreams }),
-            sendTo('subtitles', ({ event }) => event)
-          ]
-        },
-        SELECT_SUBTITLE_STREAM: { actions: sendTo('subtitles', ({ event }) => event) },
-        SELECTED_SUBTITLE_STREAM_UPDATED: {
-          actions: assign({ selectedSubtitleStreamIndex: ({ event }) => event.streamIndex })
-        },
 
-        DESTROY: { target: 'WAITING' }
+        // Local mode: all actors (current behavior)
+        LOCAL: {
+          invoke: [
+            {
+              id: 'media',
+              src: 'mediaLogic',
+              input: ({ context }) => ({ videoTarget: context.videoElement! }),
+            },
+            {
+              id: 'mediaSource',
+              src: 'mediaSourceLogic',
+              input: ({ context }) => ({ videoElement: context.videoElement!, remuxerOptions: context.remuxerOptions! }),
+            },
+            {
+              id: 'dataSource',
+              src: 'dataSourceLogic',
+              input: ({ context }) => ({ remuxerOptions: context.remuxerOptions! }),
+            },
+            {
+              id: 'thumbnails',
+              src: 'thumbnailsLogic',
+              input: ({ context }) => ({ remuxerOptions: context.remuxerOptions! }),
+            },
+            {
+              id: 'subtitles',
+              src: 'subtitlesLogic',
+              input: ({ context }) => ({
+                publicPath: context.remuxerOptions!.publicPath,
+                videoElement: context.videoElement!,
+                canvasElement: context.canvasElement!,
+                subtitlesRendererOptions: context.subtitlesRendererOptions!
+              }),
+            }
+          ],
+          on: {
+            // Data pipeline: data-source <-> media-source
+            NEED_DATA: { actions: sendTo('dataSource', ({ event }) => event) },
+            SEEKING: { actions: sendTo('dataSource', ({ event }) => event) },
+            METADATA: { actions: sendTo('mediaSource', ({ event }) => event) },
+            DATA: { actions: sendTo('mediaSource', ({ event }) => event) },
+            TIMESTAMP_OFFSET: { actions: sendTo('mediaSource', ({ event }) => event) },
+            INDEXES: { actions: assign({ indexes: ({ event }) => event.indexes }) },
+
+            // Thumbnails
+            NEW_THUMBNAIL: { actions: assign({ thumbnails: ({ context, event }) => [...context.thumbnails, event.thumbnail] }) },
+            DOWNLOADED_RANGES_UPDATED: { actions: sendTo('thumbnails', ({ event }) => event) },
+
+            // Subtitles
+            NEW_ATTACHMENTS: {
+              actions: [
+                assign({ attachments: ({ context, event }) => [...context.attachments, ...event.attachments] }),
+                sendTo('subtitles', ({ event }) => event)
+              ]
+            },
+            NEW_SUBTITLE_FRAGMENTS: {
+              actions: [
+                assign({ subtitleFragments: ({ context, event }) => [...context.subtitleFragments, ...event.subtitles] }),
+                sendTo('subtitles', ({ event }) => event)
+              ]
+            },
+            SUBTITLE_STREAMS_UPDATED: {
+              actions: [
+                assign({ subtitleStreams: ({ event }) => event.subtitlesStreams }),
+                sendTo('subtitles', ({ event }) => event)
+              ]
+            },
+            SELECT_SUBTITLE_STREAM: { actions: sendTo('subtitles', ({ event }) => event) },
+            SELECTED_SUBTITLE_STREAM_UPDATED: {
+              actions: assign({ selectedSubtitleStreamIndex: ({ event }) => event.streamIndex })
+            },
+          }
+        },
       }
     },
     DESTROYED: {}

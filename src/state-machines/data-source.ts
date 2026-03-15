@@ -18,7 +18,7 @@ type DataSourceInput = {
   remuxerOptions: Parameters<typeof makeRemuxer>[0]
 }
 
-export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEmittedEvents>(async ({ sendBack, receive, input, self, emit }) => {
+export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEmittedEvents>(async ({ sendBack, receive, input }) => {
   const { remuxerOptions } = input
   const { publicPath, workerUrl, bufferSize, length, read } = remuxerOptions
 

@@ -60,7 +60,7 @@ export const Chrome = ({ children, mediaInformation, loadingInformation }: Chrom
 
   const mouseMove: MouseEventHandler<HTMLDivElement> = (ev) => {
     mediaPlayerContext.update(({ ...mediaPlayerContext, hideUI: false }))
-    if (autoHide.current) clearInterval(autoHide.current)
+    if (autoHide.current) clearTimeout(autoHide.current)
     const timeout = setTimeout(() => {
       mediaPlayerContext.update(({ ...mediaPlayerContext, hideUI: true }))
     }, 3_000) as unknown as number

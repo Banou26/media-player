@@ -31,7 +31,7 @@ const defaultPreEvictionTime = -20
 const defaultPostEvictionTime = 60
 const defaultBufferTargetTime = 30
 
-export default fromAsyncCallback<MediaSourceEvents, MediaSourceInput, MediaSourceEmittedEvents>(async ({ sendBack, receive, input, self, emit }) => {
+export default fromAsyncCallback<MediaSourceEvents, MediaSourceInput, MediaSourceEmittedEvents>(async ({ sendBack, receive, input }) => {
   const { videoElement, preEvictionTime, postEvictionTime, bufferTargetTime } = input
 
   const handleError = () => console.error(videoElement.error)

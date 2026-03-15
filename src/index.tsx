@@ -152,7 +152,7 @@ export const FKNVideoRoot = (
   }, [isReady, volume, muted, firstRender])
 
   useEffect(() => {
-    if (status !== 'OK') return
+    if (typeof status !== 'object' || !('ACTIVE' in status)) return
     return () => {
       mediaActor.send({ type: 'DESTROY' })
     }
@@ -212,7 +212,7 @@ const FKNVideoTargetRoot = (
   }, [isReady, volume, muted, firstRender])
 
   useEffect(() => {
-    if (status !== 'OK_TARGET') return
+    if (typeof status !== 'object' || !('ACTIVE' in status)) return
     return () => {
       mediaActor.send({ type: 'DESTROY' })
     }
