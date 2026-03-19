@@ -1,9 +1,10 @@
-import { useRef, useState, useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { css } from '@emotion/react'
 
 import { TooltipDisplay } from './tooltip-display'
 import { MediaMachineContext } from '../state-machines'
 import { logToLinearVolume } from '../utils/volume-utils'
+import useSlider from '../utils/use-slider'
 
 const style = css`
   display: flex;
@@ -31,7 +32,7 @@ const style = css`
     background: #ffffff;
     border-radius: 50%;
     transform: translateX(-50%);
-    pointer-events: none; 
+    pointer-events: none;
 
     width: 10px;
     height: 10px;
@@ -47,71 +48,13 @@ const VolumeSlider = ({ value, onChange }: VolumeSliderType) => {
   const volume = MediaMachineContext.useSelector((state) => state.context.media.volume)
   const muted = MediaMachineContext.useSelector((state) => state.context.media.muted)
 
-  const sliderRef = useRef<HTMLDivElement>(null)
-  const [isDragging, setIsDragging] = useState(false)
-
-  const getNewVolumeFromEvent = (clientX: number): number => {
-    if (!sliderRef.current) return value
-    const rect = sliderRef.current.getBoundingClientRect()
-    const xPos = clientX - rect.left
-    const clamped = Math.max(0, Math.min(xPos, rect.width))
-    return clamped / rect.width
-  }
-
-  const handlePointerDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    setIsDragging(true)
-    const newVolume = getNewVolumeFromEvent(e.clientX)
-    onChange(newVolume)
-  }
-
-  const handlePointerMove = (e: MouseEvent) => {
-    if (!isDragging) return
-    const newVolume = getNewVolumeFromEvent(e.clientX)
-    onChange(newVolume)
-  }
-
-  const handlePointerUp = () => {
-    setIsDragging(false)
-  }
-
-  const handleWheel = (e: WheelEvent) => {
-    e.preventDefault()
-    const step = 0.05
-    let newVol = value
-    if (e.deltaY < 0) {
-      // scroll up
-      newVol = Math.min(1, newVol + step)
-    } else {
-      // scroll down
-      newVol = Math.max(0, newVol - step)
-    }
-    onChange(newVol)
-  }
-
-  useEffect(() => {
-    window.addEventListener('mousemove', handlePointerMove)
-    window.addEventListener('mouseup', handlePointerUp)
-    return () => {
-      window.removeEventListener('mousemove', handlePointerMove)
-      window.removeEventListener('mouseup', handlePointerUp)
-    }
-  }, [isDragging])
-
-  useEffect(() => {
-    const slider = sliderRef.current
-    if (slider) {
-      slider.addEventListener('wheel', handleWheel, { passive: false })
-    }
-    return () => {
-      if (slider) {
-        slider.removeEventListener('wheel', handleWheel)
-      }
-    }
-  }, [value])
-
-  const fillPercent = value * 100
-  const fillColor = '#fff'
-  const emptyColor = '#3A3A3A'
+  const { sliderRef, onMouseDown, fillPercent } = useSlider({
+    value,
+    min: 0,
+    max: 1,
+    step: 0.05,
+    onChange,
+  })
 
   const displayVolumePercent = useMemo(
     () => Math.round(muted ? 0 : logToLinearVolume(volume) * 100),
@@ -125,21 +68,19 @@ const VolumeSlider = ({ value, onChange }: VolumeSliderType) => {
         <div
           ref={sliderRef}
           css={style}
-          onMouseDown={handlePointerDown}
+          onMouseDown={onMouseDown}
         >
           <div
             style={{
-              background: `linear-gradient(to right, 
-                ${fillColor} 0% ${fillPercent}%, 
-                ${emptyColor} ${fillPercent}% 100%
+              background: `linear-gradient(to right,
+                #fff 0% ${fillPercent}%,
+                #3A3A3A ${fillPercent}% 100%
               )`
             }}
           >
             <div
               className="volume-handle"
-              style={{
-                left: `${value * 100}%`
-              }}
+              style={{ left: `${fillPercent}%` }}
             />
           </div>
         </div>

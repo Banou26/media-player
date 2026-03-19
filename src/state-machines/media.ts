@@ -11,6 +11,11 @@ import thumbnailsLogic, { Thumbnail } from './thumbnails'
 import { JassubOptions } from 'jassub'
 import { DownloadedRange } from '../utils/context'
 
+// Helper to forward an event to a child actor unchanged
+const forwardTo = (actorId: string) => ({
+  actions: sendTo(actorId, ({ event }: { event: any }) => event) as any
+})
+
 export default setup({
   types: {} as {
     context: {
@@ -108,17 +113,13 @@ export default setup({
   on: {
     'SET_VIDEO_ELEMENT': {
       actions: [
-        assign({
-          videoElement: ({ event }) => event.videoElement,
-        }),
+        assign({ videoElement: ({ event }) => event.videoElement }),
         { type: 'isReady' }
       ]
     },
     'SET_CANVAS_ELEMENT': {
       actions: [
-        assign({
-          canvasElement: ({ event }) => event.canvasElement,
-        }),
+        assign({ canvasElement: ({ event }) => event.canvasElement }),
         { type: 'isReady' }
       ]
     },
@@ -132,25 +133,19 @@ export default setup({
       on: {
         'MEDIA_SOURCE_OPTIONS': {
           actions: [
-            assign({
-              mediaSourceOptions: ({ event }) => event.mediaSourceOptions
-            }),
+            assign({ mediaSourceOptions: ({ event }) => event.mediaSourceOptions }),
             { type: 'isReady' }
           ]
         },
         'REMUXER_OPTIONS': {
           actions: [
-            assign({
-              remuxerOptions: ({ event }) => event.remuxerOptions
-            }),
+            assign({ remuxerOptions: ({ event }) => event.remuxerOptions }),
             { type: 'isReady' }
           ]
         },
         'SUBTITLES_RENDERER_OPTIONS': {
           actions: [
-            assign({
-              subtitlesRendererOptions: ({ event }) => event.subtitlesRendererOptions
-            }),
+            assign({ subtitlesRendererOptions: ({ event }) => event.subtitlesRendererOptions }),
             { type: 'isReady' }
           ]
         },
@@ -191,32 +186,42 @@ export default setup({
         }
       ],
       on: {
-        'PLAY': { actions: sendTo('media', ({ event }) => event) },
-        'PAUSE': { actions: sendTo('media', ({ event }) => event) },
-        'SET_TIME': { actions: sendTo('media', ({ event }) => event) },
-        'SET_PLAYBACK_RATE': { actions: sendTo('media', ({ event }) => event) },
+        // Forward to media actor
+        'PLAY': forwardTo('media'),
+        'PAUSE': forwardTo('media'),
+        'SET_TIME': forwardTo('media'),
+        'SET_PLAYBACK_RATE': forwardTo('media'),
+        'SET_VOLUME': forwardTo('media'),
+
+        // Forward to other actors
+        'NEED_DATA': forwardTo('dataSource'),
+        'METADATA': forwardTo('mediaSource'),
+        'SEEKING': forwardTo('dataSource'),
+        'DATA': forwardTo('mediaSource'),
+        'TIMESTAMP_OFFSET': forwardTo('mediaSource'),
+        'DOWNLOADED_RANGES_UPDATED': forwardTo('thumbnails'),
+        'SELECT_SUBTITLE_STREAM': forwardTo('subtitles'),
+
+        // Media state updates
         'PLAYING': { actions: assign({ media: ({ context }) => ({ ...context.media, paused: false }) }) },
         'PAUSED': { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
         'ENDED': { actions: assign({ media: ({ context }) => ({ ...context.media, paused: true }) }) },
-        'TIME_UPDATE': { actions: [
-          assign({ media: ({ context, event }) => ({ ...context.media, currentTime: event.currentTime }) }),
-          sendTo('subtitles', ({ event }) => event)
-        ] },
-        'VOLUME_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, muted: event.muted, volume: event.volume }) }) },
-        'SET_VOLUME': { actions: sendTo('media', ({ event }) => event) },
-        'PLAYBACK_RATE_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, playbackRate: event.playbackRate }) }) },
         'DURATION_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, duration: event.duration }) }) },
-        'NEED_DATA': { actions: sendTo('dataSource', ({ event }) => event) },
-        'METADATA': { actions: sendTo('mediaSource', ({ event }) => event) },
-        'SEEKING': { actions: sendTo('dataSource', ({ event }) => event) },
-        'DATA': { actions: sendTo('mediaSource', ({ event }) => event) },
-        'TIMESTAMP_OFFSET': { actions: sendTo('mediaSource', ({ event }) => event) },
-        'NEW_THUMBNAIL': { actions: [assign({ thumbnails: ({ context, event }) => [...context.thumbnails, event.thumbnail] })] },
-        'DOWNLOADED_RANGES_UPDATED': { actions: sendTo('thumbnails', ({ event }) => event) },
-        'INDEXES': {
+        'PLAYBACK_RATE_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, playbackRate: event.playbackRate }) }) },
+        'VOLUME_UPDATE': { actions: assign({ media: ({ context, event }) => ({ ...context.media, muted: event.muted, volume: event.volume }) }) },
+        'TIME_UPDATE': {
           actions: [
-            assign({ indexes: ({ event }) => event.indexes })
+            assign({ media: ({ context, event }) => ({ ...context.media, currentTime: event.currentTime }) }),
+            sendTo('subtitles', ({ event }) => event)
           ]
+        },
+
+        // Collection updates
+        'NEW_THUMBNAIL': {
+          actions: assign({ thumbnails: ({ context, event }) => [...context.thumbnails, event.thumbnail] })
+        },
+        'INDEXES': {
+          actions: assign({ indexes: ({ event }) => event.indexes })
         },
         'NEW_ATTACHMENTS': {
           actions: [
@@ -228,7 +233,6 @@ export default setup({
           actions: [
             assign({ subtitleFragments: ({ context, event }) => [...context.subtitleFragments, ...event.subtitles] }),
             sendTo('subtitles', ({ event }) => event)
-            // emit(({ event }) => ({ type: 'NEW_SUBTITLE_FRAGMENTS', subtitles: event.subtitles }))
           ]
         },
         'SUBTITLE_STREAMS_UPDATED': {
@@ -237,15 +241,8 @@ export default setup({
             sendTo('subtitles', ({ event }) => event)
           ]
         },
-        'SELECT_SUBTITLE_STREAM': {
-          actions: [
-            sendTo('subtitles', ({ event }) => event)
-          ]
-        },
         'SELECTED_SUBTITLE_STREAM_UPDATED': {
-          actions: [
-            assign({ selectedSubtitleStreamIndex: ({ event }) => event.streamIndex })
-          ]
+          actions: assign({ selectedSubtitleStreamIndex: ({ event }) => event.streamIndex })
         },
         'DESTROY': { target: 'WAITING' }
       }
