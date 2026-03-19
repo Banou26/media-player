@@ -1,6 +1,7 @@
 /// <reference types="@emotion/react/types/css-prop" />
 import type { ClassAttributes, MutableRefObject, ReactNode, RefCallback } from 'react'
 import type { MediaPlayerContextType } from './utils/context'
+import type { MediaBackend, ThumbnailCapableBackend } from './backends'
 
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { css } from '@emotion/react'
@@ -9,8 +10,6 @@ import { MediaMachineContext } from './state-machines'
 import { MediaPlayerContext, DownloadedRange } from './utils/context'
 import useLocalStorage, { booleanType } from './utils/use-local-storage'
 import Chrome from './components/chrome'
-
-const BUFFER_SIZE = 2_500_000
 
 const FKNVideoRootStyle = css`
   display: flex;
@@ -24,9 +23,6 @@ const FKNVideoRootStyle = css`
 export type FKNVideoOptions = {
   title?: string
   downloadedRanges?: DownloadedRange[]
-  read?: (offset: number, size: number) => Promise<ArrayBuffer>
-  size?: number
-  bufferSize?: number
   autoplay?: boolean
   mediaInformation?: ReactNode
   loadingInformation?: ReactNode
@@ -34,7 +30,12 @@ export type FKNVideoOptions = {
   jassubWorkerUrl: string
   jassubWasmUrl: string
   jassubModernWasmUrl: string
-  libavWorkerUrl: string
+  /** Factory to create the primary media backend (for demuxing/playback data) */
+  createBackend: () => Promise<MediaBackend>
+  /** Optional factory to create a second backend instance for thumbnail extraction */
+  createThumbnailBackend?: () => Promise<ThumbnailCapableBackend>
+  /** File length in bytes, used for thumbnail range checking */
+  fileLength?: number
 }
 
 export const FKNVideoRoot = (
@@ -85,20 +86,19 @@ export const FKNVideoRoot = (
   )
 
   useEffect(() => {
-    const { size, read, publicPath, libavWorkerUrl, jassubWasmUrl } = options
-    if (!read || !size || !publicPath || !libavWorkerUrl || !jassubWasmUrl) return
+    const { createBackend, createThumbnailBackend, fileLength, publicPath } = options
+    if (!createBackend || !publicPath) return
 
     mediaActor.send({
-      type: 'REMUXER_OPTIONS',
-      remuxerOptions: {
-        publicPath,
-        workerUrl: libavWorkerUrl,
-        bufferSize: options.bufferSize ?? BUFFER_SIZE,
-        length: size,
-        read
+      type: 'BACKEND_OPTIONS',
+      backendOptions: {
+        createBackend,
+        createThumbnailBackend,
+        fileLength,
+        publicPath
       }
     })
-  }, [options.read, options.size, options.publicPath, options.libavWorkerUrl, options.bufferSize])
+  }, [options.createBackend, options.publicPath, options.fileLength])
 
   useEffect(() => {
     const { jassubWorkerUrl, jassubWasmUrl, jassubModernWasmUrl } = options
@@ -176,10 +176,10 @@ const FKNVideo = (
       ...previousContext,
       videoElement,
       title: options?.title,
-      size: options?.size,
+      size: options?.fileLength,
       downloadedRanges: options?.downloadedRanges
     }))
-  }, [videoElement, options?.title, options?.size, options?.downloadedRanges])
+  }, [videoElement, options?.title, options?.fileLength, options?.downloadedRanges])
 
   return (
     <MediaPlayerContext.Provider value={chromeContext}>

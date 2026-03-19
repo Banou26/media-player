@@ -1,8 +1,7 @@
-import { makeRemuxer } from 'libav-wasm'
+import type { MediaBackend, SubtitleFragment, Attachment } from '../backends'
 
 import { fromAsyncCallback } from './utils'
-import { queuedThrottleWithLastCall, toStreamChunkSize } from '../utils'
-import { Attachment, SubtitleFragment } from 'libav-wasm/build/worker'
+import { queuedThrottleWithLastCall } from '../utils'
 
 type DataSourceEvents =
   | { type: 'METADATA', mimeType: string, duration: number }
@@ -15,22 +14,13 @@ type DataSourceEmittedEvents =
   | { type: 'NEW_ATTACHMENTS', attachments: Attachment[] }
 
 type DataSourceInput = {
-  remuxerOptions: Parameters<typeof makeRemuxer>[0]
+  createBackend: () => Promise<MediaBackend>
 }
 
-export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEmittedEvents>(async ({ sendBack, receive, input, self, emit }) => {
-  const { remuxerOptions } = input
-  const { publicPath, workerUrl, bufferSize, length, read } = remuxerOptions
+export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEmittedEvents>(async ({ sendBack, receive, input }) => {
+  const backend = await input.createBackend()
 
-  const remuxer = await makeRemuxer({
-    publicPath,
-    workerUrl,
-    bufferSize,
-    length,
-    read
-  })
-
-  const metadata = await remuxer.init()
+  const metadata = await backend.init()
   if (metadata.indexes) sendBack({ type: 'INDEXES', indexes: metadata.indexes })
   if (metadata.attachments?.length) sendBack({ type: 'NEW_ATTACHMENTS', attachments: metadata.attachments })
   if (metadata.subtitles?.length) sendBack({ type: 'NEW_SUBTITLE_FRAGMENTS', subtitles: metadata.subtitles })
@@ -41,7 +31,7 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
   const loadMore = queuedThrottleWithLastCall(100, async () => {
     if (currentSeeks.length || isFinished) return
     try {
-      const { data, subtitles, finished } = await remuxer.read()
+      const { data, subtitles, finished } = await backend.read()
       if (finished) {
         isFinished = true
       }
@@ -64,7 +54,7 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
       const seekObject = { currentTime }
       currentSeeks = [...currentSeeks, seekObject]
       try {
-        const { data, pts } = await remuxer
+        const { data, pts } = await backend
           .seek(currentTime)
           .finally(() => {
             currentSeeks = currentSeeks.filter(seekObj => seekObj !== seekObject)
@@ -79,6 +69,6 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
   })
 
   return () => {
-    remuxer.destroy()
+    backend.destroy()
   }
 })

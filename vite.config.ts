@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-import { dependencies, devDependencies } from './package.json'
+import { dependencies, devDependencies, peerDependencies } from './package.json'
 
 export default defineConfig({
   build: {
@@ -17,6 +17,7 @@ export default defineConfig({
       external: [
         ...dependencies ? Object.keys(dependencies) : [],
         ...devDependencies ? Object.keys(devDependencies) : [],
+        ...peerDependencies ? Object.keys(peerDependencies) : [],
       ]
     }
   },

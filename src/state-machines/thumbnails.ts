@@ -1,10 +1,8 @@
-import type { Index } from 'libav-wasm/build/worker'
+import type { Index, ThumbnailCapableBackend } from '../backends'
 
-import { makeRemuxer } from 'libav-wasm'
 import PQueue from 'p-queue'
 
 import { fromAsyncCallback } from './utils'
-import { toStreamChunkSize } from '../utils'
 import { DownloadedRange } from '../utils/context'
 
 type ExtendedIndex = Index & { duration?: number }
@@ -24,13 +22,15 @@ type DataSourceEmittedEvents =
   | { type: 'NEW_THUMBNAIL', thumbnail: Thumbnail }
 
 type DataSourceInput = {
-  remuxerOptions: Parameters<typeof makeRemuxer>[0]
+  createBackend?: () => Promise<ThumbnailCapableBackend>
+  fileLength?: number
 }
 
-export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEmittedEvents>(async ({ sendBack, receive, input, self, emit }) => {
-  const { remuxerOptions } = input
-  const { publicPath, workerUrl, bufferSize, length, read } = remuxerOptions
-  
+export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEmittedEvents>(async ({ sendBack, receive, input }) => {
+  if (!input.createBackend) return
+
+  const { createBackend, fileLength } = input
+
   let resolve: (value: void) => void
   const readyPromise = new Promise<void>(_resolve => {
     resolve = _resolve
@@ -62,7 +62,7 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
         selectedIndexes
           .filter((index) => {
             const nextIndex = metadata.indexes.at(index.index + 1)
-            const endByte = nextIndex ? nextIndex.pos : remuxerOptions.length
+            const endByte = nextIndex ? nextIndex.pos : fileLength ?? 0
             const startByte = index.pos
             const isWithinDownloadedRange =
               event
@@ -78,23 +78,16 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
     }
   })
 
-  const remuxer = await makeRemuxer({
-    publicPath,
-    workerUrl,
-    bufferSize,
-    length,
-    read
-  })
-
-  const metadata = await remuxer.init()
+  const backend = await createBackend()
+  const metadata = await backend.init()
 
   const queue = new PQueue({ concurrency: 1 })
-  
+
   let thumbnails: Thumbnail[] = []
   const loadMore = (index: ExtendedIndex) =>
     queue.add(async () => {
       if (thumbnails.find(thumbnail => thumbnail.index.index === index.index)) return
-      const buffer = await remuxer.readKeyframe(index.timestamp)
+      const buffer = await backend.readKeyframe(index.timestamp)
 
       const blob = new Blob([buffer], { type: 'image/png' })
       const url = URL.createObjectURL(blob)
@@ -118,6 +111,6 @@ export default fromAsyncCallback<DataSourceEvents, DataSourceInput, DataSourceEm
   resolve()
 
   return () => {
-    remuxer.destroy()
+    backend.destroy()
   }
 })

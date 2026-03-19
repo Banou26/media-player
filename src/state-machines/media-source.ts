@@ -1,9 +1,9 @@
-import { makeRemuxer } from 'libav-wasm'
+import type { InitResult } from '../backends'
 
 import { fromAsyncCallback, getTimeRanges, updateSourceBuffer } from './utils'
 
 type MediaSourceEvents =
-  | ({ type: 'METADATA' } & Awaited<ReturnType<Awaited<ReturnType<typeof makeRemuxer>>['init']>>)
+  | ({ type: 'METADATA' } & InitResult)
   | { type: 'TIMESTAMP_OFFSET', timestampOffset: number }
   | { type: 'DATA', data: ArrayBuffer }
 

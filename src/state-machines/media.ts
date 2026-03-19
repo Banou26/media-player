@@ -1,6 +1,5 @@
-import type { Attachment, Index, SubtitleFragment } from 'libav-wasm/build/worker'
+import type { Attachment, Index, SubtitleFragment, MediaBackend, ThumbnailCapableBackend } from '../backends'
 
-import { makeRemuxer } from 'libav-wasm'
 import { assign, setup, sendTo, enqueueActions } from 'xstate'
 
 import mediaPropertiesLogic from './media-properties'
@@ -11,12 +10,19 @@ import thumbnailsLogic, { Thumbnail } from './thumbnails'
 import { JassubOptions } from 'jassub'
 import { DownloadedRange } from '../utils/context'
 
+export type BackendOptions = {
+  createBackend: () => Promise<MediaBackend>
+  createThumbnailBackend?: () => Promise<ThumbnailCapableBackend>
+  fileLength?: number
+  publicPath: string
+}
+
 export default setup({
   types: {} as {
     context: {
       mediaSourceOptions: MediaSourceOptions | undefined
       subtitlesRendererOptions: Omit<JassubOptions, 'video' | 'canvas'> | undefined
-      remuxerOptions: Parameters<typeof makeRemuxer>[0] | undefined
+      backendOptions: BackendOptions | undefined
       videoElement: HTMLVideoElement | undefined
       canvasElement: HTMLCanvasElement | undefined
       media: {
@@ -38,7 +44,7 @@ export default setup({
     events:
       | { type: 'MEDIA_SOURCE_OPTIONS', mediaSourceOptions: MediaSourceOptions }
       | { type: 'SUBTITLES_RENDERER_OPTIONS', subtitlesRendererOptions: Omit<JassubOptions, 'video' | 'canvas'> }
-      | { type: 'REMUXER_OPTIONS', remuxerOptions: Parameters<typeof makeRemuxer>[0] }
+      | { type: 'BACKEND_OPTIONS', backendOptions: BackendOptions }
       | { type: 'SET_VIDEO_ELEMENT', videoElement: HTMLVideoElement }
       | { type: 'SET_CANVAS_ELEMENT', canvasElement: HTMLCanvasElement }
       | { type: 'IS_READY' }
@@ -69,7 +75,7 @@ export default setup({
   },
   actions: {
     isReady: enqueueActions(({ context, enqueue }) => {
-      if (context.videoElement && context.canvasElement && context.remuxerOptions && context.subtitlesRendererOptions && context.mediaSourceOptions) {
+      if (context.videoElement && context.canvasElement && context.backendOptions && context.subtitlesRendererOptions && context.mediaSourceOptions) {
         enqueue.raise({ type: 'IS_READY' })
       }
     })
@@ -85,7 +91,7 @@ export default setup({
   context: {
     mediaSourceOptions: undefined,
     subtitlesRendererOptions: undefined,
-    remuxerOptions: undefined,
+    backendOptions: undefined,
     videoElement: undefined,
     canvasElement: undefined,
     media: {
@@ -138,10 +144,10 @@ export default setup({
             { type: 'isReady' }
           ]
         },
-        'REMUXER_OPTIONS': {
+        'BACKEND_OPTIONS': {
           actions: [
             assign({
-              remuxerOptions: ({ event }) => event.remuxerOptions
+              backendOptions: ({ event }) => event.backendOptions
             }),
             { type: 'isReady' }
           ]
@@ -162,28 +168,31 @@ export default setup({
         {
           id: 'media',
           src: 'mediaLogic',
-          input: ({ context }) => ({ videoElement: context.videoElement!, remuxerOptions: context.remuxerOptions! }),
+          input: ({ context }) => ({ videoElement: context.videoElement! }),
         },
         {
           id: 'mediaSource',
           src: 'mediaSourceLogic',
-          input: ({ context }) => ({ videoElement: context.videoElement!, remuxerOptions: context.remuxerOptions! }),
+          input: ({ context }) => ({ videoElement: context.videoElement! }),
         },
         {
           id: 'dataSource',
           src: 'dataSourceLogic',
-          input: ({ context }) => ({ remuxerOptions: context.remuxerOptions! }),
+          input: ({ context }) => ({ createBackend: context.backendOptions!.createBackend }),
         },
         {
           id: 'thumbnails',
           src: 'thumbnailsLogic',
-          input: ({ context }) => ({ remuxerOptions: context.remuxerOptions! }),
+          input: ({ context }) => ({
+            createBackend: context.backendOptions!.createThumbnailBackend,
+            fileLength: context.backendOptions!.fileLength,
+          }),
         },
         {
           id: 'subtitles',
           src: 'subtitlesLogic',
           input: ({ context }) => ({
-            publicPath: context.remuxerOptions!.publicPath,
+            publicPath: context.backendOptions!.publicPath,
             videoElement: context.videoElement!,
             canvasElement: context.canvasElement!,
             subtitlesRendererOptions: context.subtitlesRendererOptions!
@@ -228,7 +237,6 @@ export default setup({
           actions: [
             assign({ subtitleFragments: ({ context, event }) => [...context.subtitleFragments, ...event.subtitles] }),
             sendTo('subtitles', ({ event }) => event)
-            // emit(({ event }) => ({ type: 'NEW_SUBTITLE_FRAGMENTS', subtitles: event.subtitles }))
           ]
         },
         'SUBTITLE_STREAMS_UPDATED': {

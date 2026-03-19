@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { css, Global } from '@emotion/react'
 
 import MediaPlayer from './index'
+import { createLibavBackend } from './backends'
 import { DownloadedRange } from './utils/context'
 
 const mountStyle = css`
@@ -49,6 +50,10 @@ const Mount = () => {
     return URL.createObjectURL(blob)
   }, [])
 
+  const publicPath = useMemo(() => {
+    return new URL('/build/', new URL(import.meta.url).origin).toString()
+  }, [])
+
   const libavWorkerUrl = useMemo(() => {
     const workerUrl = new URL('/build/libav.js', new URL(window.location.toString()).origin).toString()
     const blob = new Blob([`importScripts(${JSON.stringify(workerUrl)})`], { type: 'application/javascript' })
@@ -83,20 +88,43 @@ const Mount = () => {
     increaseDownloadedRanges()
   }, [contentLength])
 
+  const createBackend = useCallback(() => {
+    if (!contentLength) throw new Error('Content length not yet available')
+    return createLibavBackend({
+      publicPath,
+      workerUrl: libavWorkerUrl,
+      bufferSize: BASE_BUFFER_SIZE,
+      length: contentLength,
+      read
+    })
+  }, [contentLength, publicPath, libavWorkerUrl, read])
+
+  const createThumbnailBackend = useCallback(() => {
+    if (!contentLength) throw new Error('Content length not yet available')
+    return createLibavBackend({
+      publicPath,
+      workerUrl: libavWorkerUrl,
+      bufferSize: BASE_BUFFER_SIZE,
+      length: contentLength,
+      read
+    })
+  }, [contentLength, publicPath, libavWorkerUrl, read])
+
+  if (!contentLength) return <div css={mountStyle} />
+
   return (
     <div css={mountStyle}>
       <MediaPlayer
         title={'video.mkv'}
         downloadedRanges={contentLength ? downloadedRanges : undefined}
-        bufferSize={BASE_BUFFER_SIZE}
-        read={read}
-        size={contentLength}
         autoplay={true}
-        publicPath={new URL('/build/', new URL(import.meta.url).origin).toString()}
+        publicPath={publicPath}
         jassubModernWasmUrl={jassubModernWasmUrl}
         jassubWorkerUrl={jassubWorkerUrl}
         jassubWasmUrl={jassubWasmUrl}
-        libavWorkerUrl={libavWorkerUrl}
+        createBackend={createBackend}
+        createThumbnailBackend={createThumbnailBackend}
+        fileLength={contentLength}
       />
     </div>
   )
@@ -124,7 +152,7 @@ const globalStyle = css`
     font-size: 1.6rem;
     font-family: Fira Sans;
     color: #fff;
-    
+
     font-family: Montserrat;
   }
 

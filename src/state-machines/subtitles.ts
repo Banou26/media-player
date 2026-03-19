@@ -2,7 +2,7 @@ import type { ParsedASS, ParsedASSStyles } from 'ass-compiler'
 import type { ASS_Event, JassubOptions } from 'jassub'
 
 import JASSUB from 'jassub'
-import { Attachment, SubtitleFragment } from 'libav-wasm/build/worker'
+import type { Attachment, SubtitleFragment } from '../backends'
 
 import { parse, stringify } from 'ass-compiler'
 import { fromAsyncCallback } from './utils'
